@@ -10,6 +10,7 @@ import { loadPortfolio, loginEmail, saveProperty, saveReservation, supabase } fr
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+const normalizeSearch = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 
 function Login({ onLogin }) {
   const [login, setLogin] = useState('')
@@ -111,9 +112,13 @@ function Dashboard({ reservations, properties, setView, onNew }) {
   }
   const root = useRef()
   useGSAP(() => {
-    gsap.from('.hero-copy > *', { y: 28, opacity: 0, stagger: .08, duration: .7, ease: 'power3.out' })
-    gsap.from('.metric-card', { y: 34, opacity: 0, stagger: .1, duration: .7, delay: .15, ease: 'power3.out' })
-    gsap.utils.toArray('.property-image').forEach(img => gsap.fromTo(img, { scale: .8, opacity: .55 }, { scale: 1, opacity: 1, scrollTrigger: { trigger: img, start: 'top 92%', end: 'bottom 35%', scrub: .7 } }))
+    const media = gsap.matchMedia()
+    media.add('(min-width: 681px) and (prefers-reduced-motion: no-preference)', () => {
+      gsap.from('.hero-copy > *', { y: 28, opacity: 0, stagger: .08, duration: .7, ease: 'power3.out' })
+      gsap.from('.metric-card', { y: 34, opacity: 0, stagger: .1, duration: .7, delay: .15, ease: 'power3.out' })
+      gsap.utils.toArray('.property-image').forEach(img => gsap.fromTo(img, { scale: .8, opacity: .55 }, { scale: 1, opacity: 1, scrollTrigger: { trigger: img, start: 'top 92%', end: 'bottom 35%', scrub: .7 } }))
+    })
+    return () => media.revert()
   }, { scope: root })
   return <div ref={root}>
     <section className="hero-split">
@@ -159,25 +164,26 @@ function Reservations({ reservations, properties, onNew }) {
   const [query, setQuery] = useState('')
   const [propertyId, setPropertyId] = useState('all')
   const [status, setStatus] = useState('all')
-  const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   const activeFilters = [query.trim(), propertyId !== 'all', status !== 'all'].filter(Boolean).length
-  const filteredReservations = reservations.filter(reservation => {
-    const property = properties.find(item => item.id === reservation.propertyId)
-    const searchable = normalize([reservation.guest, reservation.phone, property?.name].join(' '))
-    return (!query.trim() || searchable.includes(normalize(query.trim())))
+  const propertyById = useMemo(() => new Map(properties.map(property => [property.id, property])), [properties])
+  const statusOptions = useMemo(() => [...new Set(reservations.map(reservation => reservation.status))].sort(), [reservations])
+  const filteredReservations = useMemo(() => reservations.filter(reservation => {
+    const property = propertyById.get(reservation.propertyId)
+    const searchable = normalizeSearch([reservation.guest, reservation.phone, property?.name].join(' '))
+    return (!query.trim() || searchable.includes(normalizeSearch(query.trim())))
       && (propertyId === 'all' || reservation.propertyId === propertyId)
       && (status === 'all' || reservation.status === status)
-  })
+  }), [propertyById, propertyId, query, reservations, status])
   const clearFilters = () => { setQuery(''); setPropertyId('all'); setStatus('all') }
   return <section className="table-card">
     <div className="table-intro"><div><p className="eyebrow">Agenda consolidada</p><h2>Todas as reservas</h2></div><button type="button" className={`secondary filter-trigger ${filtersOpen ? 'active' : ''}`} aria-expanded={filtersOpen} aria-controls="reservation-filters" onClick={()=>setFiltersOpen(open=>!open)}><Funnel /> Filtrar {activeFilters > 0 && <span>{activeFilters}</span>}<CaretDown className={filtersOpen ? 'rotated' : ''} /></button></div>
     {filtersOpen && <div className="reservation-filters" id="reservation-filters">
       <label className="reservation-search"><span>Buscar reserva</span><div><MagnifyingGlass /><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Hóspede, telefone ou imóvel" autoFocus /></div></label>
       <label><span>Imóvel</span><select value={propertyId} onChange={event=>setPropertyId(event.target.value)}><option value="all">Todos os imóveis</option>{properties.map(property=><option value={property.id} key={property.id}>{property.name}</option>)}</select></label>
-      <label><span>Status</span><select value={status} onChange={event=>setStatus(event.target.value)}><option value="all">Todos os status</option>{[...new Set(reservations.map(reservation=>reservation.status))].sort().map(item=><option value={item} key={item}>{item}</option>)}</select></label>
+      <label><span>Status</span><select value={status} onChange={event=>setStatus(event.target.value)}><option value="all">Todos os status</option>{statusOptions.map(item=><option value={item} key={item}>{item}</option>)}</select></label>
       <div className="filter-summary"><strong>{filteredReservations.length}</strong><span>{filteredReservations.length===1?'reserva encontrada':'reservas encontradas'}</span>{activeFilters > 0 && <button type="button" onClick={clearFilters}>Limpar filtros</button>}</div>
     </div>}
-    <div className="table-scroll"><table><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th></tr></thead><tbody>{filteredReservations.length ? filteredReservations.map(r=>{const p=properties.find(x=>x.id===r.propertyId); return <tr key={r.id}><td><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td><span className="property-dot" style={{background:p?.color}} />{p?.name || 'Imóvel não encontrado'}</td><td>{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></td><td><strong>{money.format(r.value)}</strong></td><td><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td></tr>}) : <tr><td className="table-empty" colSpan="5"><MagnifyingGlass /><strong>Nenhuma reserva encontrada</strong><span>Altere ou limpe os filtros para visualizar outras reservas.</span></td></tr>}</tbody></table></div>
+    <div className="table-scroll"><table className="reservation-table"><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th></tr></thead><tbody>{filteredReservations.length ? filteredReservations.map(r=>{const p=propertyById.get(r.propertyId); return <tr key={r.id}><td data-label="Hóspede"><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td data-label="Imóvel"><span className="reservation-property"><i className="property-dot" style={{background:p?.color}} />{p?.name || 'Imóvel não encontrado'}</span></td><td data-label="Período"><span className="reservation-period">{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></span></td><td data-label="Valor"><strong>{money.format(r.value)}</strong></td><td data-label="Status"><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td></tr>}) : <tr><td className="table-empty" colSpan="5"><MagnifyingGlass /><strong>Nenhuma reserva encontrada</strong><span>Altere ou limpe os filtros para visualizar outras reservas.</span></td></tr>}</tbody></table></div>
     <button className="floating-add" onClick={onNew}><Plus /> Adicionar reserva</button>
   </section>
 }
