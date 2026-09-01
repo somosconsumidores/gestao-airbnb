@@ -5,24 +5,11 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ArrowLeft, ArrowRight, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, HouseLine, List, LockKey, PencilSimple, Plus, SignOut, WarningCircle, X } from '@phosphor-icons/react'
+import { loadPortfolio, loginEmail, saveProperty, saveReservation, supabase } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
-const propertiesSeed = [
-  { id: 'ataulfo', name: 'Apt Ataulfo de Paiva', short: 'Ataulfo', color: '#E65C00', address: 'Leblon, Rio de Janeiro', status: 'Ativo', image: 'https://picsum.photos/seed/ataulfo-apartment/1200/900' },
-  { id: 'bartolomeu', name: 'Apt Bartolomeu Mitre', short: 'Bartolomeu', color: '#2F6B5F', address: 'Leblon, Rio de Janeiro', status: 'Ativo', image: 'https://picsum.photos/seed/bartolomeu-interior/1200/900' },
-  { id: 'gavea', name: 'Studio Gávea', short: 'Gávea', color: '#7C5C9E', address: 'Gávea, Rio de Janeiro', status: 'Ativo', image: 'https://picsum.photos/seed/gavea-studio/1200/900' }
-]
-
-const reservationsSeed = [
-  { id: 1, propertyId: 'ataulfo', guest: 'Marina Costa', others: 'Paulo Costa', checkin: '2026-09-03T15:00', checkout: '2026-09-08T11:00', value: 4250, phone: '(11) 98765-2231', status: 'Confirmada' },
-  { id: 2, propertyId: 'bartolomeu', guest: 'Ricardo Nunes', others: '', checkin: '2026-09-06T14:00', checkout: '2026-09-11T11:00', value: 5100, phone: '(21) 99618-0932', status: 'Confirmada' },
-  { id: 3, propertyId: 'gavea', guest: 'Laura Almeida', others: 'Beatriz Almeida, Caio Luz', checkin: '2026-09-14T15:00', checkout: '2026-09-18T10:00', value: 3200, phone: '', status: 'Confirmada' },
-  { id: 4, propertyId: 'ataulfo', guest: 'Eduardo Martins', others: '', checkin: '2026-09-20T15:00', checkout: '2026-09-25T11:00', value: 4750, phone: '(31) 98812-4440', status: 'Pendente' }
-]
-
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
-const readStore = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) || fallback } catch { return fallback } }
 
 function Login({ onLogin }) {
   const [login, setLogin] = useState('')
@@ -34,9 +21,7 @@ function Login({ onLogin }) {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({login,password}) })
-      if (!response.ok) throw new Error()
-      onLogin()
+      await onLogin(login, password)
     } catch { setError('Login ou senha incorretos. Tente novamente.') }
     finally { setLoading(false) }
   }
@@ -70,9 +55,26 @@ function Topbar({ title, onNew }) {
 }
 
 function Dashboard({ reservations, properties, setView, onNew }) {
-  const revenue = reservations.reduce((s, r) => s + Number(r.value), 0)
-  const next = [...reservations].sort((a,b) => a.checkin.localeCompare(b.checkin))[0]
+  const financialReservations = reservations.filter(reservation => Number(reservation.value) > 0)
+  const activeReservations = reservations.filter(reservation => reservation.status !== 'Cancelada')
+  const revenue = financialReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+  const nightsInMonth = reservation => Math.max(0, (Math.min(parseISO(reservation.checkout), monthEnd) - Math.max(parseISO(reservation.checkin), monthStart)) / 86400000)
+  const occupiedNights = activeReservations.reduce((sum, reservation) => sum + nightsInMonth(reservation), 0)
+  const occupancy = properties.length ? Math.min(100, Math.round((occupiedNights / (properties.length * ((monthEnd - monthStart) / 86400000))) * 100)) : 0
+  const averageDailyRate = occupiedNights ? revenue / occupiedNights : 0
+  const next = [...activeReservations].filter(reservation => parseISO(reservation.checkout) >= now).sort((a,b) => a.checkin.localeCompare(b.checkin))[0]
   const prop = id => properties.find(p => p.id === id)
+  const propertyStats = property => {
+    const financialBookings = financialReservations.filter(reservation => reservation.propertyId === property.id)
+    const operationalBookings = activeReservations.filter(reservation => reservation.propertyId === property.id)
+    const earnings = financialBookings.reduce((sum, reservation) => sum + Number(reservation.value), 0)
+    const nights = operationalBookings.reduce((sum, reservation) => sum + nightsInMonth(reservation), 0)
+    const occupied = Math.min(100, Math.round((nights / ((monthEnd - monthStart) / 86400000)) * 100))
+    return { earnings, occupied }
+  }
   const root = useRef()
   useGSAP(() => {
     gsap.from('.hero-copy > *', { y: 28, opacity: 0, stagger: .08, duration: .7, ease: 'power3.out' })
@@ -85,12 +87,12 @@ function Dashboard({ reservations, properties, setView, onNew }) {
       <div className="hero-visual"><img src="https://picsum.photos/seed/rio-modern-home/1200/1000" alt="Interior contemporâneo de apartamento" /><div className="next-stay"><Clock /><div><span>Próximo check-in</span><strong>{next ? format(parseISO(next.checkin), "d MMM 'às' HH:mm", { locale: ptBR }) : 'Nenhum'}</strong><small>{next?.guest} · {prop(next?.propertyId)?.short}</small></div></div></div>
     </section>
     <section className="metrics-grid">
-      <article className="metric-card revenue"><div className="metric-head"><span>Receita prevista</span><CurrencyDollar /></div><strong>{money.format(revenue)}</strong><p><b>+12,4%</b> em relação ao mês anterior</p><svg viewBox="0 0 500 100" preserveAspectRatio="none"><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8" fill="none" stroke="#E65C00" strokeWidth="4"/><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8 L500 100 L0 100Z" fill="url(#grad)"/><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop stopColor="#E65C00" stopOpacity=".22"/><stop offset="1" stopColor="#E65C00" stopOpacity="0"/></linearGradient></defs></svg></article>
-      <article className="metric-card"><div className="metric-head"><span>Taxa de ocupação</span><CalendarBlank /></div><strong>78<span>%</span></strong><div className="progress"><i style={{width:'78%'}} /></div><p>Meta mensal: 82%</p></article>
-      <article className="metric-card"><div className="metric-head"><span>Diária média</span><ChartLineUp /></div><strong>{money.format(revenue / Math.max(reservations.length * 5, 1))}</strong><p><b>+8,2%</b> no período</p></article>
+      <article className="metric-card revenue"><div className="metric-head"><span>Receita registrada</span><CurrencyDollar /></div><strong>{money.format(revenue)}</strong><p><b>{financialReservations.length}</b> {financialReservations.length===1?'reserva com valor':'reservas com valor'} registrado</p><svg viewBox="0 0 500 100" preserveAspectRatio="none"><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8" fill="none" stroke="#E65C00" strokeWidth="4"/><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8 L500 100 L0 100Z" fill="url(#grad)"/><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop stopColor="#E65C00" stopOpacity=".22"/><stop offset="1" stopColor="#E65C00" stopOpacity="0"/></linearGradient></defs></svg></article>
+      <article className="metric-card"><div className="metric-head"><span>Taxa de ocupação</span><CalendarBlank /></div><strong>{occupancy}<span>%</span></strong><div className="progress"><i style={{width:`${occupancy}%`}} /></div><p>Calculada sobre o mês atual</p></article>
+      <article className="metric-card"><div className="metric-head"><span>Diária média</span><ChartLineUp /></div><strong>{money.format(averageDailyRate)}</strong><p>Receita por noite ocupada</p></article>
     </section>
     <section className="section-head"><div><p className="eyebrow">Portfólio ativo</p><h2>O pulso de cada endereço</h2></div><button className="text-button" onClick={() => setView('properties')}>Ver todos <ArrowRight /></button></section>
-    <section className="property-row">{properties.map((p, i) => <article className="property-card group" key={p.id}><div className="image-wrap"><img className="property-image" src={p.image} alt={p.name} /><span style={{background:p.color}}>Ativo</span></div><div><small>{p.address}</small><h3>{p.name}</h3><p>{[84,72,79][i]}% ocupado · {money.format([11200,9800,7600][i])}</p></div></article>)}</section>
+    <section className="property-row">{properties.map(p => {const stats=propertyStats(p);return <article className="property-card group" key={p.id}><div className="image-wrap"><img className="property-image" src={p.image} alt={p.name} /><span style={{background:p.color}}>{p.status}</span></div><div><small>{p.address}</small><h3>{p.name}</h3><p>{stats.occupied}% ocupado · {money.format(stats.earnings)}</p></div></article>})}</section>
     <section className="marquee"><div>CHECK-IN CLARO · RECEITA VISÍVEL · OPERAÇÃO TRANQUILA · CHECK-IN CLARO · RECEITA VISÍVEL · OPERAÇÃO TRANQUILA ·</div></section>
   </div>
 }
@@ -112,16 +114,17 @@ function Reservations({ reservations, properties, onNew }) {
   return <section className="table-card"><div className="table-intro"><div><p className="eyebrow">Agenda consolidada</p><h2>Todas as reservas</h2></div><button className="secondary"><CaretDown /> Filtrar</button></div><div className="table-scroll"><table><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th></tr></thead><tbody>{reservations.map(r=>{const p=properties.find(x=>x.id===r.propertyId); return <tr key={r.id}><td><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td><span className="property-dot" style={{background:p.color}} />{p.name}</td><td>{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></td><td><strong>{money.format(r.value)}</strong></td><td><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td></tr>})}</tbody></table></div><button className="floating-add" onClick={onNew}><Plus /> Adicionar reserva</button></section>
 }
 
-function Properties({ properties, setProperties, reservations, setView }) {
-  const blank = { name:'', address:'', image:'' }
+function Properties({ properties, onSaveProperty, reservations, setView }) {
+  const blank = { name:'', address:'', image:'', photoFile:null, photoPath:null, color:'#B98A5A' }
   const [editor,setEditor]=useState(null)
   const [selected,setSelected]=useState(null)
   const [detailView,setDetailView]=useState('details')
   const [form,setForm]=useState(blank)
+  const [saving,setSaving]=useState(false)
   const openNew=()=>{setForm(blank);setEditor('new')}
-  const openEdit=p=>{setForm({name:p.name,address:p.address,image:p.image});setSelected(null);setEditor(p.id)}
-  const choosePhoto=e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>setForm(v=>({...v,image:reader.result}));reader.readAsDataURL(file)}
-  const save=e=>{e.preventDefault();if(editor==='new'){const id=Date.now().toString();setProperties([...properties,{id,name:form.name,short:form.name.split(' ').slice(-1)[0],color:'#B98A5A',address:form.address,status:'Ativo',image:form.image||`https://picsum.photos/seed/${encodeURIComponent(form.name)}/1200/900`}])}else{setProperties(properties.map(p=>p.id===editor?{...p,...form,short:form.name.split(' ').slice(-1)[0]}:p))}setEditor(null);setForm(blank)}
+  const openEdit=p=>{setForm({name:p.name,address:p.address,image:p.image,photoFile:null,photoPath:p.photoPath,color:p.color});setSelected(null);setEditor(p.id)}
+  const choosePhoto=e=>{const file=e.target.files?.[0];if(!file)return;setForm(v=>({...v,photoFile:file,image:URL.createObjectURL(file)}))}
+  const save=async e=>{e.preventDefault();setSaving(true);try{await onSaveProperty({...form,id:editor==='new'?null:editor});setEditor(null);setForm(blank)}finally{setSaving(false)}}
   const openProperty=p=>{setSelected(p);setDetailView('details')}
   const gains = useMemo(()=>{
     if(!selected)return []
@@ -133,7 +136,7 @@ function Properties({ properties, setProperties, reservations, setView }) {
   return <>
     <section className="property-list-head"><div><p className="eyebrow">Seu portfólio</p><h2>Imóveis sob gestão</h2><p>Cadastre unidades e acompanhe a performance individual.</p></div><button className="primary" onClick={openNew}><Plus /> Novo imóvel</button></section>
     <section className="accordion-properties">{properties.map((p,i)=><article key={p.id} onClick={()=>openProperty(p)} style={{'--bg':`url(${p.image})`}} tabIndex="0" role="button" aria-label={`Abrir detalhes de ${p.name}`}><div className="accordion-overlay"/><span>0{i+1}</span><div><small>{p.address}</small><h3>{p.name}</h3><p>{p.status} · clique para ver detalhes</p></div></article>)}</section>
-    {editor&&<div className="modal-backdrop"><form className="modal property-form" onSubmit={save}><button type="button" className="modal-close" onClick={()=>setEditor(null)}><X /></button><p className="eyebrow">{editor==='new'?'Novo endereço':'Atualizar imóvel'}</p><h2>{editor==='new'?'Cadastrar imóvel':'Editar imóvel'}</h2><div className="property-fields"><label>Nome do imóvel<input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Loft Ipanema" /></label><label>Endereço<input required value={form.address} onChange={e=>setForm({...form,address:e.target.value})} placeholder="Rua, número, bairro e cidade" /></label><label className="upload-field"><span>Foto do imóvel</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={choosePhoto}/><div className="upload-box">{form.image?<img src={form.image} alt="Prévia do imóvel"/>:<><Camera/><strong>Selecionar foto</strong><small>JPG, PNG ou WebP</small></>}</div></label></div><button className="primary full">{editor==='new'?'Salvar imóvel':'Salvar alterações'}</button></form></div>}
+    {editor&&<div className="modal-backdrop"><form className="modal property-form" onSubmit={save}><button type="button" className="modal-close" onClick={()=>setEditor(null)}><X /></button><p className="eyebrow">{editor==='new'?'Novo endereço':'Atualizar imóvel'}</p><h2>{editor==='new'?'Cadastrar imóvel':'Editar imóvel'}</h2><div className="property-fields"><label>Nome do imóvel<input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Loft Ipanema" /></label><label>Endereço<input required value={form.address} onChange={e=>setForm({...form,address:e.target.value})} placeholder="Rua, número, bairro e cidade" /></label><label className="upload-field"><span>Foto do imóvel</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={choosePhoto}/><div className="upload-box">{form.image?<img src={form.image} alt="Prévia do imóvel"/>:<><Camera/><strong>Selecionar foto</strong><small>JPG, PNG ou WebP</small></>}</div></label></div><button className="primary full" disabled={saving}>{saving?'Salvando…':editor==='new'?'Salvar imóvel':'Salvar alterações'}</button></form></div>}
     {selected&&<div className="modal-backdrop"><section className="modal property-detail"><button type="button" className="modal-close" onClick={()=>setSelected(null)}><X /></button>{detailView==='details'?<><div className="detail-photo"><img src={selected.image} alt={selected.name}/><span style={{background:selected.color}}>Ativo</span></div><p className="eyebrow">Detalhes do imóvel</p><h2>{selected.name}</h2><p className="detail-address">{selected.address}</p><div className="detail-actions"><button className="primary" onClick={()=>{setSelected(null);setView('calendar')}}><CalendarBlank/> Ver agenda</button><button className="secondary" onClick={()=>openEdit(selected)}><PencilSimple/> Editar imóvel</button><button className="secondary" onClick={()=>setDetailView('gains')}><ChartLineUp/> Ver ganhos</button></div></>:<><button className="back-button" onClick={()=>setDetailView('details')}><ArrowLeft/> Voltar ao imóvel</button><p className="eyebrow">Histórico financeiro</p><h2>Ganhos de {selected.short}</h2><div className="gains-total"><span>Total geral</span><strong>{money.format(totalGains)}</strong></div><div className="gains-list">{gains.length?gains.map(item=><div key={item.key}><span>{item.label}</span><i style={{width:`${Math.max(12,(item.value/Math.max(...gains.map(g=>g.value)))*100)}%`}}/><strong>{money.format(item.value)}</strong></div>):<p className="empty-state">Ainda não há reservas com ganhos para este imóvel.</p>}</div></>}</section></div>}
   </>
 }
@@ -146,16 +149,32 @@ function ReservationModal({ properties, onClose, onSave }) {
 }
 
 export default function App() {
-  const [logged,setLogged]=useState(()=>sessionStorage.getItem('morada-auth')==='1')
+  const [session,setSession]=useState(null)
+  const [authReady,setAuthReady]=useState(false)
+  const [loading,setLoading]=useState(false)
+  const [organizationId,setOrganizationId]=useState(null)
   const [view,setView]=useState('dashboard')
-  const [properties,setProperties]=useState(()=>readStore('morada-properties',propertiesSeed))
-  const [reservations,setReservations]=useState(()=>readStore('morada-reservations',reservationsSeed))
+  const [properties,setProperties]=useState([])
+  const [reservations,setReservations]=useState([])
   const [modal,setModal]=useState(false)
   const [toast,setToast]=useState('')
-  useEffect(()=>localStorage.setItem('morada-properties',JSON.stringify(properties)),[properties])
-  useEffect(()=>localStorage.setItem('morada-reservations',JSON.stringify(reservations)),[reservations])
+  useEffect(()=>{
+    supabase.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true)})
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,nextSession)=>{setSession(nextSession);setAuthReady(true)})
+    return ()=>subscription.unsubscribe()
+  },[])
+  useEffect(()=>{
+    if(!session){setProperties([]);setReservations([]);setOrganizationId(null);return}
+    setLoading(true)
+    loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
+  },[session])
   const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',reservations:'Reservas',properties:'Imóveis'}
-  const save=async r=>{setReservations(v=>[...v,r]);setModal(false);const p=properties.find(x=>x.id===r.propertyId);setToast('Reserva salva. Enviando alertas…');try{const response=await fetch('/api/alerts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...r,property:p.name,value:money.format(r.value)})});if(!response.ok)throw new Error();setToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{setToast('Reserva salva. Configure a Resend para ativar os alertas por email.')}setTimeout(()=>setToast(''),5000)}
-  if(!logged)return <Login onLogin={()=>{sessionStorage.setItem('morada-auth','1');setLogged(true)}} />
-  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>{sessionStorage.removeItem('morada-auth');setLogged(false)}}/><div className="workspace"><Topbar title={titles[view]} onNew={()=>setModal(true)}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal(true)}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal(true)}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal(true)}/>} {view==='properties'&&<Properties properties={properties} setProperties={setProperties} reservations={reservations} setView={setView}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&<ReservationModal properties={properties} onClose={()=>setModal(false)} onSave={save}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+  const showToast=message=>{setToast(message);window.setTimeout(()=>setToast(''),5000)}
+  const login=async(login,password)=>{if(login.trim().toLowerCase()!=='airbnb')throw new Error('Credenciais inválidas');const {error}=await supabase.auth.signInWithPassword({email:loginEmail,password});if(error)throw error}
+  const save=async form=>{let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(false)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui uma reserva nesse período.':`Não foi possível salvar a reserva: ${error.message}`);return}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
+  const savePropertyRecord=async form=>{try{const property=await saveProperty({organizationId,id:form.id,name:form.name,address:form.address,color:form.color,photoFile:form.photoFile,currentPhotoPath:form.photoPath});setProperties(current=>form.id?current.map(item=>item.id===property.id?property:item):[...current,property]);showToast('Imóvel salvo com sucesso.')}catch(error){showToast(`Não foi possível salvar o imóvel: ${error.message}`);throw error}}
+  if(!authReady)return <main className="login-page"><section className="login-panel"><p className="muted">Validando acesso seguro…</p></section></main>
+  if(!session)return <Login onLogin={login} />
+  if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
+  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={()=>setModal(true)}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal(true)}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal(true)}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal(true)}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} onClose={()=>setModal(false)} onSave={save}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }
