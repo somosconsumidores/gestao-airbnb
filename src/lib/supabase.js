@@ -45,6 +45,7 @@ export const toReservation = row => ({
   checkout: row.checkout_at,
   value: Number(row.stay_amount),
   phone: row.guest_phone || '',
+  notes: row.notes || '',
   status: ({ pending: 'Pendente', confirmed: 'Confirmada', checked_in: 'Check-in', checked_out: 'Check-out', cancelled: 'Cancelada' })[row.status] || row.status,
 })
 

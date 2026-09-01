@@ -4,7 +4,7 @@ import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { ArrowLeft, ArrowRight, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, HouseLine, List, LockKey, PencilSimple, Plus, SignOut, WarningCircle, X } from '@phosphor-icons/react'
+import { ArrowLeft, ArrowRight, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, SignOut, WarningCircle, X } from '@phosphor-icons/react'
 import { loadPortfolio, loginEmail, saveProperty, saveReservation, supabase } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
@@ -58,7 +58,12 @@ function Dashboard({ reservations, properties, setView, onNew }) {
   const [scheduledPropertyId, setScheduledPropertyId] = useState('all')
   const financialReservations = reservations.filter(reservation => Number(reservation.value) > 0)
   const activeReservations = reservations.filter(reservation => reservation.status !== 'Cancelada')
-  const revenue = financialReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
+  const paidReservations = financialReservations.filter(reservation =>
+    ['Check-in', 'Check-out'].includes(reservation.status)
+    || (reservation.status === 'Cancelada' && /valor recebido/i.test(reservation.notes))
+  )
+  const paidStays = paidReservations.filter(reservation => reservation.status !== 'Cancelada')
+  const paidRevenue = paidReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
@@ -71,13 +76,18 @@ function Dashboard({ reservations, properties, setView, onNew }) {
     return Math.max(0, Math.round((checkoutDate - checkinDate) / 86400000))
   }
   const occupiedNights = activeReservations.reduce((sum, reservation) => sum + nightsInMonth(reservation), 0)
-  const totalStayNights = activeReservations.reduce((sum, reservation) => sum + stayNights(reservation), 0)
   const occupancy = properties.length ? Math.min(100, Math.round((occupiedNights / (properties.length * ((monthEnd - monthStart) / 86400000))) * 100)) : 0
-  const averageDailyRate = totalStayNights ? revenue / totalStayNights : 0
-  const scheduledReservations = activeReservations.filter(reservation =>
+  const forecastReservations = activeReservations.filter(reservation =>
     ['Confirmada', 'Pendente'].includes(reservation.status)
     && parseISO(reservation.checkout) >= now
-    && (scheduledPropertyId === 'all' || reservation.propertyId === scheduledPropertyId)
+  )
+  const forecastRevenue = forecastReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
+  const paidNights = paidStays.reduce((sum, reservation) => sum + stayNights(reservation), 0)
+  const forecastNights = forecastReservations.reduce((sum, reservation) => sum + stayNights(reservation), 0)
+  const totalDailyNights = paidNights + forecastNights
+  const averageDailyRate = totalDailyNights ? (paidRevenue + forecastRevenue) / totalDailyNights : 0
+  const scheduledReservations = forecastReservations.filter(reservation =>
+    scheduledPropertyId === 'all' || reservation.propertyId === scheduledPropertyId
   )
   const scheduledRevenue = scheduledReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
   const scheduledRevenueByMonth = Object.values(scheduledReservations.reduce((months, reservation) => {
@@ -111,9 +121,9 @@ function Dashboard({ reservations, properties, setView, onNew }) {
       <div className="hero-visual"><img src="https://picsum.photos/seed/rio-modern-home/1200/1000" alt="Interior contemporâneo de apartamento" /><div className="next-stay"><Clock /><div><span>Próximo check-in</span><strong>{next ? format(parseISO(next.checkin), "d MMM 'às' HH:mm", { locale: ptBR }) : 'Nenhum'}</strong><small>{next?.guest} · {prop(next?.propertyId)?.short}</small></div></div></div>
     </section>
     <section className="metrics-grid">
-      <article className="metric-card revenue"><div className="metric-head"><span>Receita registrada</span><CurrencyDollar /></div><strong>{money.format(revenue)}</strong><p><b>{financialReservations.length}</b> {financialReservations.length===1?'reserva com valor':'reservas com valor'} registrado</p><svg viewBox="0 0 500 100" preserveAspectRatio="none"><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8" fill="none" stroke="#E65C00" strokeWidth="4"/><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8 L500 100 L0 100Z" fill="url(#grad)"/><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop stopColor="#E65C00" stopOpacity=".22"/><stop offset="1" stopColor="#E65C00" stopOpacity="0"/></linearGradient></defs></svg></article>
+      <article className="metric-card revenue"><div className="metric-head"><span>Receita paga</span><CurrencyDollar /></div><strong>{money.format(paidRevenue)}</strong><p><b>{paidStays.length}</b> {paidStays.length===1?'estadia paga':'estadias pagas'}</p><svg viewBox="0 0 500 100" preserveAspectRatio="none"><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8" fill="none" stroke="#E65C00" strokeWidth="4"/><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8 L500 100 L0 100Z" fill="url(#grad)"/><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop stopColor="#E65C00" stopOpacity=".22"/><stop offset="1" stopColor="#E65C00" stopOpacity="0"/></linearGradient></defs></svg></article>
       <article className="metric-card"><div className="metric-head"><span>Taxa de ocupação</span><CalendarBlank /></div><strong>{occupancy}<span>%</span></strong><div className="progress"><i style={{width:`${occupancy}%`}} /></div><p>Calculada sobre o mês atual</p></article>
-      <article className="metric-card"><div className="metric-head"><span>Diária média geral</span><ChartLineUp /></div><strong>{money.format(averageDailyRate)}</strong><p>{money.format(revenue)} ÷ {totalStayNights} noites hospedadas e programadas</p></article>
+      <article className="metric-card"><div className="metric-head"><span>Diária média geral</span><ChartLineUp /></div><strong>{money.format(averageDailyRate)}</strong><p>{money.format(paidRevenue + forecastRevenue)} ÷ {totalDailyNights} noites pagas e previstas</p></article>
     </section>
     <section className="scheduled-revenue-card">
       <div className="scheduled-revenue-copy"><div><p className="eyebrow">Previsão de caixa</p><h2>Receita programada mês a mês</h2></div><div className="scheduled-revenue-side"><label className="scheduled-property-filter"><span>Filtrar imóvel</span><select value={scheduledPropertyId} onChange={event => setScheduledPropertyId(event.target.value)}><option value="all">Todos os imóveis</option>{properties.map(property => <option key={property.id} value={property.id}>{property.name}</option>)}</select><CaretDown /></label><div className="scheduled-total"><span>Total programado</span><strong>{money.format(scheduledRevenue)}</strong><small>{scheduledReservations.length} {scheduledReservations.length === 1 ? 'reserva futura' : 'reservas futuras'}</small></div></div></div>
@@ -145,7 +155,31 @@ function CalendarView({ reservations, properties, onNew }) {
 }
 
 function Reservations({ reservations, properties, onNew }) {
-  return <section className="table-card"><div className="table-intro"><div><p className="eyebrow">Agenda consolidada</p><h2>Todas as reservas</h2></div><button className="secondary"><CaretDown /> Filtrar</button></div><div className="table-scroll"><table><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th></tr></thead><tbody>{reservations.map(r=>{const p=properties.find(x=>x.id===r.propertyId); return <tr key={r.id}><td><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td><span className="property-dot" style={{background:p.color}} />{p.name}</td><td>{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></td><td><strong>{money.format(r.value)}</strong></td><td><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td></tr>})}</tbody></table></div><button className="floating-add" onClick={onNew}><Plus /> Adicionar reserva</button></section>
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [propertyId, setPropertyId] = useState('all')
+  const [status, setStatus] = useState('all')
+  const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const activeFilters = [query.trim(), propertyId !== 'all', status !== 'all'].filter(Boolean).length
+  const filteredReservations = reservations.filter(reservation => {
+    const property = properties.find(item => item.id === reservation.propertyId)
+    const searchable = normalize([reservation.guest, reservation.phone, property?.name].join(' '))
+    return (!query.trim() || searchable.includes(normalize(query.trim())))
+      && (propertyId === 'all' || reservation.propertyId === propertyId)
+      && (status === 'all' || reservation.status === status)
+  })
+  const clearFilters = () => { setQuery(''); setPropertyId('all'); setStatus('all') }
+  return <section className="table-card">
+    <div className="table-intro"><div><p className="eyebrow">Agenda consolidada</p><h2>Todas as reservas</h2></div><button type="button" className={`secondary filter-trigger ${filtersOpen ? 'active' : ''}`} aria-expanded={filtersOpen} aria-controls="reservation-filters" onClick={()=>setFiltersOpen(open=>!open)}><Funnel /> Filtrar {activeFilters > 0 && <span>{activeFilters}</span>}<CaretDown className={filtersOpen ? 'rotated' : ''} /></button></div>
+    {filtersOpen && <div className="reservation-filters" id="reservation-filters">
+      <label className="reservation-search"><span>Buscar reserva</span><div><MagnifyingGlass /><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Hóspede, telefone ou imóvel" autoFocus /></div></label>
+      <label><span>Imóvel</span><select value={propertyId} onChange={event=>setPropertyId(event.target.value)}><option value="all">Todos os imóveis</option>{properties.map(property=><option value={property.id} key={property.id}>{property.name}</option>)}</select></label>
+      <label><span>Status</span><select value={status} onChange={event=>setStatus(event.target.value)}><option value="all">Todos os status</option>{[...new Set(reservations.map(reservation=>reservation.status))].sort().map(item=><option value={item} key={item}>{item}</option>)}</select></label>
+      <div className="filter-summary"><strong>{filteredReservations.length}</strong><span>{filteredReservations.length===1?'reserva encontrada':'reservas encontradas'}</span>{activeFilters > 0 && <button type="button" onClick={clearFilters}>Limpar filtros</button>}</div>
+    </div>}
+    <div className="table-scroll"><table><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th></tr></thead><tbody>{filteredReservations.length ? filteredReservations.map(r=>{const p=properties.find(x=>x.id===r.propertyId); return <tr key={r.id}><td><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td><span className="property-dot" style={{background:p?.color}} />{p?.name || 'Imóvel não encontrado'}</td><td>{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></td><td><strong>{money.format(r.value)}</strong></td><td><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td></tr>}) : <tr><td className="table-empty" colSpan="5"><MagnifyingGlass /><strong>Nenhuma reserva encontrada</strong><span>Altere ou limpe os filtros para visualizar outras reservas.</span></td></tr>}</tbody></table></div>
+    <button className="floating-add" onClick={onNew}><Plus /> Adicionar reserva</button>
+  </section>
 }
 
 function Properties({ properties, onSaveProperty, reservations, setView }) {
