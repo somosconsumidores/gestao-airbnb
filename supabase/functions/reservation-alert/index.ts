@@ -24,7 +24,7 @@ Deno.serve(async req => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   const resendApiKey = Deno.env.get("RESEND_API_KEY")
-  const alertFrom = Deno.env.get("ALERT_FROM") || "Agenda Airbnb <onboarding@resend.dev>"
+  const alertFrom = Deno.env.get("ALERT_FROM") || "Morada Airbnb <alertas@biopeak-ai.com>"
   if (!resendApiKey) return json({ error: "RESEND_API_KEY is not configured" }, 500)
 
   const userClient = createClient(supabaseUrl, anonKey, {
