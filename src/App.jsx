@@ -272,23 +272,46 @@ function Finances({ reservations, properties, expenses, adjustments, expenseOver
     })).filter(item => item.date.getFullYear() === year && item.date.getMonth() === month)
     return [...extraordinary, ...outgoing, ...income].sort((a, b) => a.date - b.date || a.sortOrder - b.sortOrder)
   }
-  const selectedMovements = useMemo(() => movementsForMonth(anchor), [adjustments, anchor, expenses, overrideByExpenseMonth, propertyById, reservations])
   const totals = movements => movements.reduce((result, item) => ({ ...result, [item.type]: result[item.type] + item.amount }), { income: 0, expense: 0 })
-  const selectedTotals = totals(selectedMovements)
-  const runningBalances = useMemo(() => {
+  const cashFlowStart = useMemo(() => {
+    const startDates = expenses.filter(expense => expense.active).map(expense => parseISO(expense.incurredOn).getTime())
+    return startDates.length ? startOfMonth(new Date(Math.min(...startDates))) : startOfMonth(new Date())
+  }, [expenses])
+  const openingBalanceForMonth = date => {
+    if (monthNumber(date) <= monthNumber(cashFlowStart)) return 0
+    let cursor = cashFlowStart
     let balance = 0
+    while (monthNumber(cursor) < monthNumber(date)) {
+      const monthTotals = totals(movementsForMonth(cursor))
+      balance += monthTotals.income - monthTotals.expense
+      cursor = addMonths(cursor, 1)
+    }
+    return balance
+  }
+  const selectedMovements = useMemo(() => movementsForMonth(anchor), [adjustments, anchor, expenses, overrideByExpenseMonth, propertyById, reservations])
+  const selectedTotals = totals(selectedMovements)
+  const openingBalance = useMemo(() => openingBalanceForMonth(anchor), [adjustments, anchor, cashFlowStart, expenses, overrideByExpenseMonth, propertyById, reservations])
+  const closingBalance = openingBalance + selectedTotals.income - selectedTotals.expense
+  const runningBalances = useMemo(() => {
+    let balance = openingBalance
     return selectedMovements.reduce((balances, item) => {
       balance += item.type === 'income' ? item.amount : -item.amount
       balances.set(item.id, balance)
       return balances
     }, new Map())
-  }, [selectedMovements])
-  const yearMonths = useMemo(() => Array.from({ length: 12 }, (_, month) => {
-    const date = new Date(anchor.getFullYear(), month, 1)
-    const monthMovements = movementsForMonth(date)
-    const monthTotals = totals(monthMovements)
-    return { date, ...monthTotals, balance: monthTotals.income - monthTotals.expense }
-  }), [adjustments, anchor.getFullYear(), expenses, overrideByExpenseMonth, propertyById, reservations])
+  }, [openingBalance, selectedMovements])
+  const yearMonths = useMemo(() => {
+    let balance = openingBalanceForMonth(new Date(anchor.getFullYear(), 0, 1))
+    return Array.from({ length: 12 }, (_, month) => {
+      const date = new Date(anchor.getFullYear(), month, 1)
+      const monthMovements = movementsForMonth(date)
+      const monthTotals = totals(monthMovements)
+      if (monthNumber(date) < monthNumber(cashFlowStart)) return { date, ...monthTotals, balance: monthTotals.income - monthTotals.expense }
+      if (monthNumber(date) === monthNumber(cashFlowStart)) balance = 0
+      balance += monthTotals.income - monthTotals.expense
+      return { date, ...monthTotals, balance }
+    })
+  }, [adjustments, anchor.getFullYear(), cashFlowStart, expenses, overrideByExpenseMonth, propertyById, reservations])
   const maxMonthlyValue = Math.max(...yearMonths.flatMap(item => [item.income, item.expense]), 1)
   const recurringTotal = expenses.filter(expense => expense.active && expense.expenseType === 'recurring').reduce((sum, expense) => sum + expense.amount, 0)
   const goPrevious = () => setAnchor(current => mode === 'daily' ? subMonths(current, 1) : new Date(current.getFullYear() - 1, current.getMonth(), 1))
@@ -308,10 +331,11 @@ function Finances({ reservations, properties, expenses, adjustments, expenseOver
       <div className="finance-metrics">
         <article><span><ArrowUp /> Entradas</span><strong>{money.format(selectedTotals.income)}</strong><small>Receitas pagas e previstas</small></article>
         <article><span><ArrowDown /> Saídas</span><strong>{money.format(selectedTotals.expense)}</strong><small>Pontuais e recorrentes</small></article>
-        <article className={selectedTotals.income - selectedTotals.expense < 0 ? 'negative' : ''}><span><Wallet /> Saldo projetado</span><strong>{money.format(selectedTotals.income - selectedTotals.expense)}</strong><small>Posição ao fim do mês</small></article>
+        <article className={closingBalance < 0 ? 'negative' : ''}><span><Wallet /> Saldo projetado</span><strong>{money.format(closingBalance)}</strong><small>Saldo inicial + movimentações</small></article>
       </div>
       <div className="cash-ledger">
         <div className="cash-ledger-head"><div><p className="eyebrow">Agenda financeira</p><h3>Movimentações de {format(anchor, 'MMMM', { locale: ptBR })}</h3></div><button className="secondary" onClick={onNewExpense}><Plus /> Registrar despesa</button></div>
+        <div className="ledger-opening"><span>{monthNumber(anchor) === monthNumber(cashFlowStart) ? 'Saldo inicial do controle' : `Saldo trazido de ${format(subMonths(anchor, 1), 'MMMM', { locale: ptBR })}`}</span><strong className={openingBalance < 0 ? 'negative' : ''}>{money.format(openingBalance)}</strong></div>
         {selectedMovements.length ? <><div className="movement-columns"><span>Movimentação</span><span>Saldo da conta</span></div><div className="movement-list">{selectedMovements.map(item => { const runningBalance = runningBalances.get(item.id); return <div className={`movement-row ${item.override ? 'has-override' : ''}`} key={item.id}><time dateTime={format(item.date, 'yyyy-MM-dd')}><b>{format(item.date, 'dd')}</b><span>{format(item.date, 'EEE', { locale: ptBR })}</span></time><i className={item.type}><span>{item.type === 'income' ? <ArrowUp /> : <ArrowDown />}</span></i><div><strong>{item.description}</strong><small>{item.detail}</small>{item.expense && <button type="button" className="adjust-expense" onClick={() => onEditExpense({ expense: item.expense, month: item.month, override: item.override })}><PencilSimple /> {item.override ? 'Editar ajuste' : 'Ajustar mês'}</button>}</div><b className={`movement-amount ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.amount)}</b><b className={`running-balance ${runningBalance < 0 ? 'negative' : 'positive'}`}>{money.format(runningBalance)}</b></div>})}</div></> : <p className="empty-state">Nenhuma movimentação prevista para este mês.</p>}
       </div>
     </> : <div className="monthly-flow">
