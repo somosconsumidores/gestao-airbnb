@@ -151,11 +151,21 @@ function CalendarView({ reservations, properties, onNew }) {
   const start = startOfMonth(month), end = endOfMonth(month)
   const days = eachDayOfInterval({ start, end })
   const blanks = Array((start.getDay() + 6) % 7).fill(null)
-  const dayReservations = day => reservations.filter(r => { const a=parseISO(r.checkin), b=parseISO(r.checkout); return day >= new Date(a.getFullYear(),a.getMonth(),a.getDate()) && day < new Date(b.getFullYear(),b.getMonth(),b.getDate()) })
+  const dayReservations = day => reservations.flatMap(reservation => {
+    const checkin = parseISO(reservation.checkin)
+    const checkout = parseISO(reservation.checkout)
+    const checkinDate = new Date(checkin.getFullYear(), checkin.getMonth(), checkin.getDate())
+    const checkoutDate = new Date(checkout.getFullYear(), checkout.getMonth(), checkout.getDate())
+    const events = []
+    if (isSameDay(day, checkinDate)) events.push({ reservation, type: 'checkin', time: format(checkin, 'HH:mm') })
+    if (day > checkinDate && day < checkoutDate) events.push({ reservation, type: 'stay' })
+    if (isSameDay(day, checkoutDate)) events.push({ reservation, type: 'checkout', time: format(checkout, 'HH:mm') })
+    return events
+  }).sort((a, b) => ({ checkout: 0, checkin: 1, stay: 2 })[a.type] - ({ checkout: 0, checkin: 1, stay: 2 })[b.type])
   return <section className="calendar-shell">
     <div className="calendar-toolbar"><div><button className="icon-button" onClick={()=>setMonth(subMonths(month,1))}><ArrowLeft /></button><button className="icon-button" onClick={()=>setMonth(addMonths(month,1))}><ArrowRight /></button><h2>{format(month, 'MMMM yyyy', { locale: ptBR })}</h2></div><div className="legend">{properties.map(p=><span key={p.id}><i style={{background:p.color}} />{p.short}</span>)}</div></div>
     <div className="calendar-grid weekdays">{['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(d=><div key={d}>{d}</div>)}</div>
-    <div className="calendar-grid days">{blanks.map((_,i)=><div className="day empty" key={`b${i}`} />)}{days.map(day=><button className={`day ${isSameDay(day,new Date())?'today':''}`} key={day.toISOString()} onClick={onNew}><span>{format(day,'d')}</span>{dayReservations(day).slice(0,3).map(r=>{const p=properties.find(x=>x.id===r.propertyId);return <div className="booking" style={{borderLeftColor:p.color,background:`${p.color}14`}} key={r.id}><b>{r.guest.split(' ')[0]}</b><small>{p.short}</small></div>})}</button>)}</div>
+    <div className="calendar-grid days">{blanks.map((_,i)=><div className="day empty" key={`b${i}`} />)}{days.map(day=>{const events=dayReservations(day);return <button className={`day ${isSameDay(day,new Date())?'today':''}`} key={day.toISOString()} onClick={onNew}><span>{format(day,'d')}</span>{events.slice(0,4).map(event=>{const {reservation,type,time}=event;const p=properties.find(x=>x.id===reservation.propertyId);const movement=type==='checkin'?'Entrada':type==='checkout'?'Saída':null;return <div className={`booking ${movement?'movement':''} ${type}`} style={{borderLeftColor:p.color,background:`${p.color}14`}} key={`${reservation.id}-${type}`} title={`${reservation.guest} · ${p.name}${movement?` · ${movement} às ${time}`:''}`}><b>{reservation.guest.split(' ')[0]}</b><small>{movement?<><span>{p.short} · </span>{movement} {time}</>:p.short}</small></div>})}{events.length>4&&<small className="more-events">+{events.length-4} movimentações</small>}</button>})}</div>
   </section>
 }
 
