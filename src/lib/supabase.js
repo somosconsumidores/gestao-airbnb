@@ -49,6 +49,18 @@ export const toReservation = row => ({
   status: ({ pending: 'Pendente', confirmed: 'Confirmada', checked_in: 'Check-in', checked_out: 'Check-out', cancelled: 'Cancelada' })[row.status] || row.status,
 })
 
+export const toExpense = row => ({
+  id: String(row.id),
+  organizationId: row.organization_id,
+  propertyId: row.property_id ? String(row.property_id) : null,
+  description: row.description,
+  amount: Number(row.amount),
+  incurredOn: row.incurred_on,
+  expenseType: row.expense_type,
+  recurrenceDay: row.recurrence_day,
+  active: row.active,
+})
+
 export async function loadPortfolio() {
   const { data: memberships, error: membershipError } = await supabase
     .from('organization_members')
@@ -59,12 +71,14 @@ export async function loadPortfolio() {
   const membership = memberships?.[0]
   if (!membership) throw new Error('Usuário sem acesso à organização. Associe-o em organization_members.')
 
-  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }] = await Promise.all([
+  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }, { data: expenseRows, error: expenseError }] = await Promise.all([
     supabase.from('properties').select('*').eq('organization_id', membership.organization_id).order('name'),
     supabase.from('reservations').select('*, reservation_guests(full_name)').eq('organization_id', membership.organization_id).order('checkin_at'),
+    supabase.from('expenses').select('*').eq('organization_id', membership.organization_id).order('incurred_on'),
   ])
   if (propertyError) throw propertyError
   if (reservationError) throw reservationError
+  if (expenseError) throw expenseError
 
   const properties = await Promise.all((propertyRows || []).map(async row => {
     if (!row.photo_path) return toProperty(row)
@@ -77,6 +91,7 @@ export async function loadPortfolio() {
     member: membership,
     properties,
     reservations: (reservationRows || []).map(toReservation),
+    expenses: (expenseRows || []).map(toExpense),
   }
 }
 
@@ -175,4 +190,21 @@ export async function updateReservation({ organizationId, form }) {
   }
 
   return toReservation({ ...data, reservation_guests: guests.map(full_name => ({ full_name })) })
+}
+
+export async function saveExpense({ organizationId, form }) {
+  const recurring = form.expenseType === 'recurring'
+  const recurrenceDay = recurring ? Number(form.recurrenceDay) : null
+  const incurredOn = recurring ? `${form.startMonth}-01` : form.incurredOn
+  const { data, error } = await supabase.from('expenses').insert({
+    organization_id: organizationId,
+    description: form.description.trim(),
+    category: 'other',
+    amount: Number(form.amount),
+    incurred_on: incurredOn,
+    expense_type: form.expenseType,
+    recurrence_day: recurrenceDay,
+  }).select().single()
+  if (error) throw error
+  return toExpense(data)
 }
