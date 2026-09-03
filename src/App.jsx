@@ -5,7 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, Receipt, SignOut, Wallet, WarningCircle, X } from '@phosphor-icons/react'
-import { loadPortfolio, loginEmail, saveExpense, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
+import { deleteExpenseOverride, loadPortfolio, loginEmail, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
@@ -225,10 +225,11 @@ function Properties({ properties, onSaveProperty, reservations, setView }) {
   </>
 }
 
-function Finances({ reservations, properties, expenses, adjustments, onNewExpense }) {
+function Finances({ reservations, properties, expenses, adjustments, expenseOverrides, onNewExpense, onEditExpense }) {
   const [mode, setMode] = useState('daily')
   const [anchor, setAnchor] = useState(() => startOfMonth(new Date()))
   const propertyById = useMemo(() => new Map(properties.map(property => [property.id, property])), [properties])
+  const overrideByExpenseMonth = useMemo(() => new Map(expenseOverrides.map(override => [`${override.expenseId}-${override.month}`, override])), [expenseOverrides])
   const isFinancialReservation = reservation => Number(reservation.value) > 0
     && (reservation.status !== 'Cancelada' || /valor recebido/i.test(reservation.notes))
   const isPaidReservation = reservation => ['Check-in', 'Check-out'].includes(reservation.status)
@@ -256,7 +257,9 @@ function Finances({ reservations, properties, expenses, adjustments, onNewExpens
       if (monthNumber(date) < monthNumber(startsAt)) return []
       const lastDay = new Date(year, month + 1, 0).getDate()
       const occurrence = new Date(year, month, Math.min(expense.recurrenceDay, lastDay))
-      return [{ id: `expense-${expense.id}-${year}-${month}`, date: occurrence, type: 'expense', description: expense.description, detail: `Recorrente · todo dia ${String(expense.recurrenceDay).padStart(2, '0')}`, amount: expense.amount, sortOrder: 1 }]
+      const monthKey = format(date, 'yyyy-MM')
+      const override = overrideByExpenseMonth.get(`${expense.id}-${monthKey}`)
+      return [{ id: `expense-${expense.id}-${year}-${month}`, date: occurrence, type: 'expense', description: expense.description, detail: override ? `Valor ajustado neste mês · base ${money.format(expense.amount)}` : `Recorrente · todo dia ${String(expense.recurrenceDay).padStart(2, '0')}`, amount: override?.amount ?? expense.amount, sortOrder: 1, expense, override, month: monthKey }]
     })
     const extraordinary = adjustments.map(adjustment => ({
       id: `adjustment-${adjustment.id}`,
@@ -269,7 +272,7 @@ function Finances({ reservations, properties, expenses, adjustments, onNewExpens
     })).filter(item => item.date.getFullYear() === year && item.date.getMonth() === month)
     return [...extraordinary, ...outgoing, ...income].sort((a, b) => a.date - b.date || a.sortOrder - b.sortOrder)
   }
-  const selectedMovements = useMemo(() => movementsForMonth(anchor), [adjustments, anchor, expenses, propertyById, reservations])
+  const selectedMovements = useMemo(() => movementsForMonth(anchor), [adjustments, anchor, expenses, overrideByExpenseMonth, propertyById, reservations])
   const totals = movements => movements.reduce((result, item) => ({ ...result, [item.type]: result[item.type] + item.amount }), { income: 0, expense: 0 })
   const selectedTotals = totals(selectedMovements)
   const runningBalances = useMemo(() => {
@@ -285,7 +288,7 @@ function Finances({ reservations, properties, expenses, adjustments, onNewExpens
     const monthMovements = movementsForMonth(date)
     const monthTotals = totals(monthMovements)
     return { date, ...monthTotals, balance: monthTotals.income - monthTotals.expense }
-  }), [adjustments, anchor.getFullYear(), expenses, propertyById, reservations])
+  }), [adjustments, anchor.getFullYear(), expenses, overrideByExpenseMonth, propertyById, reservations])
   const maxMonthlyValue = Math.max(...yearMonths.flatMap(item => [item.income, item.expense]), 1)
   const recurringTotal = expenses.filter(expense => expense.active && expense.expenseType === 'recurring').reduce((sum, expense) => sum + expense.amount, 0)
   const goPrevious = () => setAnchor(current => mode === 'daily' ? subMonths(current, 1) : new Date(current.getFullYear() - 1, current.getMonth(), 1))
@@ -309,7 +312,7 @@ function Finances({ reservations, properties, expenses, adjustments, onNewExpens
       </div>
       <div className="cash-ledger">
         <div className="cash-ledger-head"><div><p className="eyebrow">Agenda financeira</p><h3>Movimentações de {format(anchor, 'MMMM', { locale: ptBR })}</h3></div><button className="secondary" onClick={onNewExpense}><Plus /> Registrar despesa</button></div>
-        {selectedMovements.length ? <><div className="movement-columns"><span>Movimentação</span><span>Saldo da conta</span></div><div className="movement-list">{selectedMovements.map(item => { const runningBalance = runningBalances.get(item.id); return <div className="movement-row" key={item.id}><time dateTime={format(item.date, 'yyyy-MM-dd')}><b>{format(item.date, 'dd')}</b><span>{format(item.date, 'EEE', { locale: ptBR })}</span></time><i className={item.type}><span>{item.type === 'income' ? <ArrowUp /> : <ArrowDown />}</span></i><div><strong>{item.description}</strong><small>{item.detail}</small></div><b className={`movement-amount ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.amount)}</b><b className={`running-balance ${runningBalance < 0 ? 'negative' : 'positive'}`}>{money.format(runningBalance)}</b></div>})}</div></> : <p className="empty-state">Nenhuma movimentação prevista para este mês.</p>}
+        {selectedMovements.length ? <><div className="movement-columns"><span>Movimentação</span><span>Saldo da conta</span></div><div className="movement-list">{selectedMovements.map(item => { const runningBalance = runningBalances.get(item.id); return <div className={`movement-row ${item.override ? 'has-override' : ''}`} key={item.id}><time dateTime={format(item.date, 'yyyy-MM-dd')}><b>{format(item.date, 'dd')}</b><span>{format(item.date, 'EEE', { locale: ptBR })}</span></time><i className={item.type}><span>{item.type === 'income' ? <ArrowUp /> : <ArrowDown />}</span></i><div><strong>{item.description}</strong><small>{item.detail}</small>{item.expense && <button type="button" className="adjust-expense" onClick={() => onEditExpense({ expense: item.expense, month: item.month, override: item.override })}><PencilSimple /> {item.override ? 'Editar ajuste' : 'Ajustar mês'}</button>}</div><b className={`movement-amount ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.amount)}</b><b className={`running-balance ${runningBalance < 0 ? 'negative' : 'positive'}`}>{money.format(runningBalance)}</b></div>})}</div></> : <p className="empty-state">Nenhuma movimentação prevista para este mês.</p>}
       </div>
     </> : <div className="monthly-flow">
       <div className="monthly-flow-head"><div><p className="eyebrow">Ano completo</p><h3>Entradas e saídas mês a mês</h3></div><div className="flow-legend"><span><i className="income"/>Entradas</span><span><i className="expense"/>Saídas</span></div></div>
@@ -320,6 +323,33 @@ function Finances({ reservations, properties, expenses, adjustments, onNewExpens
       <div className="expense-register-list">{expenses.map(expense => <div key={expense.id}><span className="expense-icon"><Receipt /></span><div><strong>{expense.description}</strong><small>{expense.expenseType === 'recurring' ? `Recorrente · dia ${String(expense.recurrenceDay).padStart(2, '0')}` : `Pontual · ${format(parseISO(expense.incurredOn), 'dd/MM/yyyy')}`}</small></div><b>{money.format(expense.amount)}</b></div>)}</div>
     </div>
   </section>
+}
+
+function ExpenseOverrideModal({ edit, overrides, onClose, onSave, onReset }) {
+  const findOverride = month => overrides.find(override => override.expenseId === edit.expense.id && override.month === month)
+  const [month, setMonth] = useState(edit.month)
+  const [amount, setAmount] = useState(String(edit.override?.amount ?? edit.expense.amount))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const activeOverride = findOverride(month)
+  const changeMonth = event => {
+    const nextMonth = event.target.value
+    setMonth(nextMonth)
+    setAmount(String(findOverride(nextMonth)?.amount ?? edit.expense.amount))
+  }
+  const submit = async event => {
+    event.preventDefault()
+    setError('')
+    if (Number(amount) < 0) { setError('O valor previsto não pode ser negativo.'); return }
+    setSaving(true)
+    try { await onSave({ expenseId: edit.expense.id, month, amount: Number(amount) }) } catch { setError('Não foi possível salvar o ajuste mensal.') } finally { setSaving(false) }
+  }
+  const reset = async () => {
+    setSaving(true)
+    setError('')
+    try { await onReset({ expenseId: edit.expense.id, month }) } catch { setError('Não foi possível restaurar o valor recorrente.') } finally { setSaving(false) }
+  }
+  return <div className="modal-backdrop"><form className="modal override-modal" onSubmit={submit}><button type="button" className="modal-close" onClick={onClose}><X /></button><p className="eyebrow">Exceção mensal</p><h2>Ajustar previsão</h2><div className="override-expense-summary"><span>{edit.expense.description}</span><strong>{money.format(edit.expense.amount)}</strong><small>Valor recorrente padrão</small></div><div className="form-grid"><label>Mês do ajuste<input required type="month" value={month} onChange={changeMonth} /></label><label>Valor previsto neste mês<input required min="0" step="0.01" type="number" value={amount} onChange={event => setAmount(event.target.value)} /></label></div><p className="override-help">A alteração vale somente para {format(parseISO(`${month}-01`), 'MMMM \'de\' yyyy', { locale: ptBR })}. Nos outros meses, permanece {money.format(edit.expense.amount)}.</p>{error && <p className="form-error"><WarningCircle />{error}</p>}<div className="override-actions">{activeOverride && <button type="button" className="secondary" onClick={reset} disabled={saving}>Restaurar recorrência</button>}<button className="primary" disabled={saving}>{saving ? 'Salvando…' : 'Salvar ajuste'} {!saving && <ArrowRight />}</button></div></form></div>
 }
 
 function ExpenseModal({ onClose, onSave }) {
@@ -368,8 +398,10 @@ export default function App() {
   const [reservations,setReservations]=useState([])
   const [expenses,setExpenses]=useState([])
   const [adjustments,setAdjustments]=useState([])
+  const [expenseOverrides,setExpenseOverrides]=useState([])
   const [modal,setModal]=useState(null)
   const [expenseModal,setExpenseModal]=useState(false)
+  const [overrideModal,setOverrideModal]=useState(null)
   const [toast,setToast]=useState('')
   useEffect(()=>{
     supabase.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true)})
@@ -377,9 +409,9 @@ export default function App() {
     return ()=>subscription.unsubscribe()
   },[])
   useEffect(()=>{
-    if(!session){setProperties([]);setReservations([]);setExpenses([]);setAdjustments([]);setOrganizationId(null);return}
+    if(!session){setProperties([]);setReservations([]);setExpenses([]);setAdjustments([]);setExpenseOverrides([]);setOrganizationId(null);return}
     setLoading(true)
-    loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses);setAdjustments(data.adjustments)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
+    loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses);setAdjustments(data.adjustments);setExpenseOverrides(data.expenseOverrides)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
   },[session])
   const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',reservations:'Reservas',properties:'Imóveis',finances:'Finanças pessoais'}
   const showToast=message=>{setToast(message);window.setTimeout(()=>setToast(''),5000)}
@@ -387,9 +419,11 @@ export default function App() {
   const save=async form=>{if(form.id){try{const reservation=await updateReservation({organizationId,form});setReservations(current=>current.map(item=>item.id===reservation.id?reservation:item).sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null);showToast('Reserva atualizada com sucesso.');return}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível atualizar a reserva: ${error.message}`);throw error}}let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível salvar a reserva: ${error.message}`);throw error}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
   const savePropertyRecord=async form=>{try{const property=await saveProperty({organizationId,id:form.id,name:form.name,address:form.address,color:form.color,photoFile:form.photoFile,currentPhotoPath:form.photoPath});setProperties(current=>form.id?current.map(item=>item.id===property.id?property:item):[...current,property]);showToast('Imóvel salvo com sucesso.')}catch(error){showToast(`Não foi possível salvar o imóvel: ${error.message}`);throw error}}
   const saveExpenseRecord=async form=>{try{const expense=await saveExpense({organizationId,form});setExpenses(current=>[...current,expense].sort((a,b)=>a.incurredOn.localeCompare(b.incurredOn)));setExpenseModal(false);showToast('Despesa adicionada ao fluxo de caixa.')}catch(error){showToast(`Não foi possível salvar a despesa: ${error.message}`);throw error}}
+  const saveOverrideRecord=async form=>{try{const override=await saveExpenseOverride({organizationId,...form});setExpenseOverrides(current=>[...current.filter(item=>!(item.expenseId===override.expenseId&&item.month===override.month)),override]);setOverrideModal(null);showToast('Previsão mensal ajustada sem alterar a recorrência.')}catch(error){showToast(`Não foi possível ajustar a previsão: ${error.message}`);throw error}}
+  const resetOverrideRecord=async form=>{try{await deleteExpenseOverride({organizationId,...form});setExpenseOverrides(current=>current.filter(item=>!(item.expenseId===form.expenseId&&item.month===form.month)));setOverrideModal(null);showToast('Valor recorrente restaurado para este mês.')}catch(error){showToast(`Não foi possível restaurar a recorrência: ${error.message}`);throw error}}
   if(!authReady)return <main className="login-page"><section className="login-panel"><p className="muted">Validando acesso seguro…</p></section></main>
   if(!session)return <Login onLogin={login} />
   if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
   const newAction = view === 'finances' ? () => setExpenseModal(true) : () => setModal('new')
-  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} onNewExpense={()=>setExpenseModal(true)}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }

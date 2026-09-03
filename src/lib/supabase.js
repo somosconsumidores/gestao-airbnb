@@ -71,6 +71,15 @@ export const toCashAdjustment = row => ({
   notes: row.notes || '',
 })
 
+export const toExpenseOverride = row => ({
+  id: String(row.id),
+  organizationId: row.organization_id,
+  expenseId: String(row.expense_id),
+  month: row.month.slice(0, 7),
+  amount: Number(row.amount),
+  notes: row.notes || '',
+})
+
 export async function loadPortfolio() {
   const { data: memberships, error: membershipError } = await supabase
     .from('organization_members')
@@ -81,16 +90,18 @@ export async function loadPortfolio() {
   const membership = memberships?.[0]
   if (!membership) throw new Error('Usuário sem acesso à organização. Associe-o em organization_members.')
 
-  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }, { data: expenseRows, error: expenseError }, { data: adjustmentRows, error: adjustmentError }] = await Promise.all([
+  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }, { data: expenseRows, error: expenseError }, { data: adjustmentRows, error: adjustmentError }, { data: overrideRows, error: overrideError }] = await Promise.all([
     supabase.from('properties').select('*').eq('organization_id', membership.organization_id).order('name'),
     supabase.from('reservations').select('*, reservation_guests(full_name)').eq('organization_id', membership.organization_id).order('checkin_at'),
     supabase.from('expenses').select('*').eq('organization_id', membership.organization_id).order('incurred_on'),
     supabase.from('cash_adjustments').select('*').eq('organization_id', membership.organization_id).order('occurred_at'),
+    supabase.from('expense_monthly_overrides').select('*').eq('organization_id', membership.organization_id).order('month'),
   ])
   if (propertyError) throw propertyError
   if (reservationError) throw reservationError
   if (expenseError) throw expenseError
   if (adjustmentError) throw adjustmentError
+  if (overrideError) throw overrideError
 
   const properties = await Promise.all((propertyRows || []).map(async row => {
     if (!row.photo_path) return toProperty(row)
@@ -105,6 +116,7 @@ export async function loadPortfolio() {
     reservations: (reservationRows || []).map(toReservation),
     expenses: (expenseRows || []).map(toExpense),
     adjustments: (adjustmentRows || []).map(toCashAdjustment),
+    expenseOverrides: (overrideRows || []).map(toExpenseOverride),
   }
 }
 
@@ -220,4 +232,23 @@ export async function saveExpense({ organizationId, form }) {
   }).select().single()
   if (error) throw error
   return toExpense(data)
+}
+
+export async function saveExpenseOverride({ organizationId, expenseId, month, amount }) {
+  const { data, error } = await supabase.from('expense_monthly_overrides').upsert({
+    organization_id: organizationId,
+    expense_id: Number(expenseId),
+    month: `${month}-01`,
+    amount: Number(amount),
+  }, { onConflict: 'organization_id,expense_id,month' }).select().single()
+  if (error) throw error
+  return toExpenseOverride(data)
+}
+
+export async function deleteExpenseOverride({ organizationId, expenseId, month }) {
+  const { error } = await supabase.from('expense_monthly_overrides').delete()
+    .eq('organization_id', organizationId)
+    .eq('expense_id', Number(expenseId))
+    .eq('month', `${month}-01`)
+  if (error) throw error
 }
