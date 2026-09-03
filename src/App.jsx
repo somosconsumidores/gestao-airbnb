@@ -5,7 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ArrowLeft, ArrowRight, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, SignOut, WarningCircle, X } from '@phosphor-icons/react'
-import { loadPortfolio, loginEmail, saveProperty, saveReservation, supabase } from './lib/supabase'
+import { loadPortfolio, loginEmail, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
@@ -151,7 +151,7 @@ function CalendarView({ reservations, properties, onNew }) {
   const start = startOfMonth(month), end = endOfMonth(month)
   const days = eachDayOfInterval({ start, end })
   const blanks = Array((start.getDay() + 6) % 7).fill(null)
-  const dayReservations = day => reservations.filter(r => { const a=parseISO(r.checkin), b=parseISO(r.checkout); return day >= new Date(a.getFullYear(),a.getMonth(),a.getDate()) && day <= new Date(b.getFullYear(),b.getMonth(),b.getDate()) })
+  const dayReservations = day => reservations.filter(r => { const a=parseISO(r.checkin), b=parseISO(r.checkout); return day >= new Date(a.getFullYear(),a.getMonth(),a.getDate()) && day < new Date(b.getFullYear(),b.getMonth(),b.getDate()) })
   return <section className="calendar-shell">
     <div className="calendar-toolbar"><div><button className="icon-button" onClick={()=>setMonth(subMonths(month,1))}><ArrowLeft /></button><button className="icon-button" onClick={()=>setMonth(addMonths(month,1))}><ArrowRight /></button><h2>{format(month, 'MMMM yyyy', { locale: ptBR })}</h2></div><div className="legend">{properties.map(p=><span key={p.id}><i style={{background:p.color}} />{p.short}</span>)}</div></div>
     <div className="calendar-grid weekdays">{['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(d=><div key={d}>{d}</div>)}</div>
@@ -159,7 +159,7 @@ function CalendarView({ reservations, properties, onNew }) {
   </section>
 }
 
-function Reservations({ reservations, properties, onNew }) {
+function Reservations({ reservations, properties, onNew, onEdit }) {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [propertyId, setPropertyId] = useState('all')
@@ -183,7 +183,7 @@ function Reservations({ reservations, properties, onNew }) {
       <label><span>Status</span><select value={status} onChange={event=>setStatus(event.target.value)}><option value="all">Todos os status</option>{statusOptions.map(item=><option value={item} key={item}>{item}</option>)}</select></label>
       <div className="filter-summary"><strong>{filteredReservations.length}</strong><span>{filteredReservations.length===1?'reserva encontrada':'reservas encontradas'}</span>{activeFilters > 0 && <button type="button" onClick={clearFilters}>Limpar filtros</button>}</div>
     </div>}
-    <div className="table-scroll"><table className="reservation-table"><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th></tr></thead><tbody>{filteredReservations.length ? filteredReservations.map(r=>{const p=propertyById.get(r.propertyId); return <tr key={r.id}><td data-label="Hóspede"><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td data-label="Imóvel"><span className="reservation-property"><i className="property-dot" style={{background:p?.color}} />{p?.name || 'Imóvel não encontrado'}</span></td><td data-label="Período"><span className="reservation-period">{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></span></td><td data-label="Valor"><strong>{money.format(r.value)}</strong></td><td data-label="Status"><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td></tr>}) : <tr><td className="table-empty" colSpan="5"><MagnifyingGlass /><strong>Nenhuma reserva encontrada</strong><span>Altere ou limpe os filtros para visualizar outras reservas.</span></td></tr>}</tbody></table></div>
+    <div className="table-scroll"><table className="reservation-table"><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th><th><span className="sr-only">Ações</span></th></tr></thead><tbody>{filteredReservations.length ? filteredReservations.map(r=>{const p=propertyById.get(r.propertyId); return <tr key={r.id}><td data-label="Hóspede"><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td data-label="Imóvel"><span className="reservation-property"><i className="property-dot" style={{background:p?.color}} />{p?.name || 'Imóvel não encontrado'}</span></td><td data-label="Período"><span className="reservation-period">{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></span></td><td data-label="Valor"><strong>{money.format(r.value)}</strong></td><td data-label="Status"><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td><td data-label="Ações"><button type="button" className="edit-reservation" onClick={()=>onEdit(r)} aria-label={`Editar reserva de ${r.guest}`}><PencilSimple /> Editar</button></td></tr>}) : <tr><td className="table-empty" colSpan="6"><MagnifyingGlass /><strong>Nenhuma reserva encontrada</strong><span>Altere ou limpe os filtros para visualizar outras reservas.</span></td></tr>}</tbody></table></div>
     <button className="floating-add" onClick={onNew}><Plus /> Adicionar reserva</button>
   </section>
 }
@@ -215,11 +215,25 @@ function Properties({ properties, onSaveProperty, reservations, setView }) {
   </>
 }
 
-function ReservationModal({ properties, onClose, onSave }) {
-  const [form,setForm]=useState({propertyId:properties[0].id,guest:'',others:'',value:'',checkin:'',checkout:'',phone:'',status:'Confirmada'})
+function ReservationModal({ properties, reservation, onClose, onSave }) {
+  const isEditing = Boolean(reservation)
+  const localDateTime = value => value ? format(parseISO(value), "yyyy-MM-dd'T'HH:mm") : ''
+  const [form,setForm]=useState(reservation ? {
+    id: reservation.id,
+    propertyId: reservation.propertyId,
+    guest: reservation.guest,
+    others: reservation.others,
+    value: reservation.value,
+    checkin: localDateTime(reservation.checkin),
+    checkout: localDateTime(reservation.checkout),
+    phone: reservation.phone,
+    status: reservation.status,
+  } : {propertyId:properties[0].id,guest:'',others:'',value:'',checkin:'',checkout:'',phone:'',status:'Confirmada'})
+  const [saving,setSaving]=useState(false)
+  const [error,setError]=useState('')
   const update=e=>setForm({...form,[e.target.name]:e.target.value})
-  const submit=e=>{e.preventDefault();onSave({...form,id:Date.now(),value:Number(form.value)})}
-  return <div className="modal-backdrop"><form className="modal reservation-modal" onSubmit={submit}><button type="button" className="modal-close" onClick={onClose}><X /></button><p className="eyebrow">Nova hospedagem</p><h2>Cadastrar reserva</h2><div className="form-grid"><label className="wide">Imóvel<select name="propertyId" value={form.propertyId} onChange={update}>{properties.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><label>Hóspede principal<input required name="guest" value={form.guest} onChange={update} placeholder="Nome completo" /></label><label>Celular<input name="phone" value={form.phone} onChange={update} placeholder="(00) 00000-0000" /></label><label className="wide">Demais hóspedes<input name="others" value={form.others} onChange={update} placeholder="Separe os nomes por vírgula" /></label><label>Check-in<input required type="datetime-local" name="checkin" value={form.checkin} onChange={update} /></label><label>Check-out<input required type="datetime-local" name="checkout" value={form.checkout} onChange={update} /></label><label className="wide">Valor da estadia<input required min="0" type="number" name="value" value={form.value} onChange={update} placeholder="R$ 0,00" /></label></div><button className="primary full">Confirmar e enviar alertas <ArrowRight /></button></form></div>
+  const submit=async e=>{e.preventDefault();setError('');if(new Date(form.checkout)<=new Date(form.checkin)){setError('O check-out precisa ocorrer depois do check-in.');return}setSaving(true);try{await onSave({...form,value:Number(form.value)})}catch{setError('Revise os dados e tente novamente.')}finally{setSaving(false)}}
+  return <div className="modal-backdrop"><form className="modal reservation-modal" onSubmit={submit}><button type="button" className="modal-close" onClick={onClose}><X /></button><p className="eyebrow">{isEditing?'Ajustar hospedagem':'Nova hospedagem'}</p><h2>{isEditing?'Editar reserva':'Cadastrar reserva'}</h2><div className="form-grid"><label className="wide">Imóvel<select name="propertyId" value={form.propertyId} onChange={update}>{properties.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><label>Hóspede principal<input required name="guest" value={form.guest} onChange={update} placeholder="Nome completo" /></label><label>Celular<input name="phone" value={form.phone} onChange={update} placeholder="(00) 00000-0000" /></label><label className="wide">Demais hóspedes<input name="others" value={form.others} onChange={update} placeholder="Separe os nomes por vírgula" /></label><label>Check-in<input required type="datetime-local" name="checkin" value={form.checkin} onChange={update} /></label><label>Check-out<input required type="datetime-local" name="checkout" value={form.checkout} onChange={update} /></label><label>Valor da estadia<input required min="0" step="0.01" type="number" name="value" value={form.value} onChange={update} placeholder="R$ 0,00" /></label><label>Status<select name="status" value={form.status} onChange={update}>{['Pendente','Confirmada','Check-in','Check-out','Cancelada'].map(item=><option key={item}>{item}</option>)}</select></label></div>{error&&<p className="form-error"><WarningCircle />{error}</p>}<button className="primary full" disabled={saving}>{saving?'Salvando…':isEditing?'Salvar alterações':'Confirmar e enviar alertas'} {!saving&&<ArrowRight />}</button></form></div>
 }
 
 export default function App() {
@@ -230,7 +244,7 @@ export default function App() {
   const [view,setView]=useState('dashboard')
   const [properties,setProperties]=useState([])
   const [reservations,setReservations]=useState([])
-  const [modal,setModal]=useState(false)
+  const [modal,setModal]=useState(null)
   const [toast,setToast]=useState('')
   useEffect(()=>{
     supabase.auth.getSession().then(({data})=>{setSession(data.session);setAuthReady(true)})
@@ -245,10 +259,10 @@ export default function App() {
   const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',reservations:'Reservas',properties:'Imóveis'}
   const showToast=message=>{setToast(message);window.setTimeout(()=>setToast(''),5000)}
   const login=async(login,password)=>{if(login.trim().toLowerCase()!=='airbnb')throw new Error('Credenciais inválidas');const {error}=await supabase.auth.signInWithPassword({email:loginEmail,password});if(error)throw error}
-  const save=async form=>{let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(false)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui uma reserva nesse período.':`Não foi possível salvar a reserva: ${error.message}`);return}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
+  const save=async form=>{if(form.id){try{const reservation=await updateReservation({organizationId,form});setReservations(current=>current.map(item=>item.id===reservation.id?reservation:item).sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null);showToast('Reserva atualizada com sucesso.');return}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível atualizar a reserva: ${error.message}`);throw error}}let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível salvar a reserva: ${error.message}`);throw error}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
   const savePropertyRecord=async form=>{try{const property=await saveProperty({organizationId,id:form.id,name:form.name,address:form.address,color:form.color,photoFile:form.photoFile,currentPhotoPath:form.photoPath});setProperties(current=>form.id?current.map(item=>item.id===property.id?property:item):[...current,property]);showToast('Imóvel salvo com sucesso.')}catch(error){showToast(`Não foi possível salvar o imóvel: ${error.message}`);throw error}}
   if(!authReady)return <main className="login-page"><section className="login-panel"><p className="muted">Validando acesso seguro…</p></section></main>
   if(!session)return <Login onLogin={login} />
   if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
-  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={()=>setModal(true)}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal(true)}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal(true)}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal(true)}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} onClose={()=>setModal(false)} onSave={save}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={()=>setModal('new')}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }

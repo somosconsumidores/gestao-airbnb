@@ -131,3 +131,48 @@ export async function saveReservation({ organizationId, form }) {
 
   return toReservation({ ...data, reservation_guests: guests.map(full_name => ({ full_name })) })
 }
+
+export async function updateReservation({ organizationId, form }) {
+  const status = ({
+    Pendente: 'pending',
+    Confirmada: 'confirmed',
+    'Check-in': 'checked_in',
+    'Check-out': 'checked_out',
+    Cancelada: 'cancelled',
+  })[form.status] || 'confirmed'
+  const { data, error } = await supabase
+    .from('reservations')
+    .update({
+      property_id: Number(form.propertyId),
+      primary_guest_name: form.guest.trim(),
+      guest_phone: form.phone.trim() || null,
+      stay_amount: Number(form.value),
+      checkin_at: new Date(form.checkin).toISOString(),
+      checkout_at: new Date(form.checkout).toISOString(),
+      status,
+    })
+    .eq('id', form.id)
+    .eq('organization_id', organizationId)
+    .select()
+    .single()
+  if (error) throw error
+
+  const guests = form.others.split(',').map(name => name.trim()).filter(Boolean)
+  const { error: deleteGuestsError } = await supabase
+    .from('reservation_guests')
+    .delete()
+    .eq('reservation_id', form.id)
+    .eq('organization_id', organizationId)
+  if (deleteGuestsError) throw deleteGuestsError
+
+  if (guests.length) {
+    const { error: guestsError } = await supabase.from('reservation_guests').insert(guests.map(full_name => ({
+      organization_id: organizationId,
+      reservation_id: form.id,
+      full_name,
+    })))
+    if (guestsError) throw guestsError
+  }
+
+  return toReservation({ ...data, reservation_guests: guests.map(full_name => ({ full_name })) })
+}
