@@ -61,6 +61,16 @@ export const toExpense = row => ({
   active: row.active,
 })
 
+export const toCashAdjustment = row => ({
+  id: String(row.id),
+  organizationId: row.organization_id,
+  description: row.description,
+  entryType: row.entry_type,
+  amount: Number(row.amount),
+  occurredAt: row.occurred_at,
+  notes: row.notes || '',
+})
+
 export async function loadPortfolio() {
   const { data: memberships, error: membershipError } = await supabase
     .from('organization_members')
@@ -71,14 +81,16 @@ export async function loadPortfolio() {
   const membership = memberships?.[0]
   if (!membership) throw new Error('Usuário sem acesso à organização. Associe-o em organization_members.')
 
-  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }, { data: expenseRows, error: expenseError }] = await Promise.all([
+  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }, { data: expenseRows, error: expenseError }, { data: adjustmentRows, error: adjustmentError }] = await Promise.all([
     supabase.from('properties').select('*').eq('organization_id', membership.organization_id).order('name'),
     supabase.from('reservations').select('*, reservation_guests(full_name)').eq('organization_id', membership.organization_id).order('checkin_at'),
     supabase.from('expenses').select('*').eq('organization_id', membership.organization_id).order('incurred_on'),
+    supabase.from('cash_adjustments').select('*').eq('organization_id', membership.organization_id).order('occurred_at'),
   ])
   if (propertyError) throw propertyError
   if (reservationError) throw reservationError
   if (expenseError) throw expenseError
+  if (adjustmentError) throw adjustmentError
 
   const properties = await Promise.all((propertyRows || []).map(async row => {
     if (!row.photo_path) return toProperty(row)
@@ -92,6 +104,7 @@ export async function loadPortfolio() {
     properties,
     reservations: (reservationRows || []).map(toReservation),
     expenses: (expenseRows || []).map(toExpense),
+    adjustments: (adjustmentRows || []).map(toCashAdjustment),
   }
 }
 

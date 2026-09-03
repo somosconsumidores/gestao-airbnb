@@ -225,7 +225,7 @@ function Properties({ properties, onSaveProperty, reservations, setView }) {
   </>
 }
 
-function Finances({ reservations, properties, expenses, onNewExpense }) {
+function Finances({ reservations, properties, expenses, adjustments, onNewExpense }) {
   const [mode, setMode] = useState('daily')
   const [anchor, setAnchor] = useState(() => startOfMonth(new Date()))
   const propertyById = useMemo(() => new Map(properties.map(property => [property.id, property])), [properties])
@@ -244,29 +244,39 @@ function Finances({ reservations, properties, expenses, onNewExpense }) {
       detail: `${propertyById.get(reservation.propertyId)?.short || 'Imóvel'} · ${isPaidReservation(reservation) ? 'Receita paga' : 'Receita prevista'}`,
       amount: Number(reservation.value),
       projected: !isPaidReservation(reservation),
+      sortOrder: 2,
     })).filter(item => item.date.getFullYear() === year && item.date.getMonth() === month)
     const outgoing = expenses.filter(expense => expense.active).flatMap(expense => {
       const startsAt = parseISO(expense.incurredOn)
       if (expense.expenseType === 'one_time') {
         return startsAt.getFullYear() === year && startsAt.getMonth() === month
-          ? [{ id: `expense-${expense.id}`, date: startsAt, type: 'expense', description: expense.description, detail: 'Despesa pontual', amount: expense.amount }]
+          ? [{ id: `expense-${expense.id}`, date: startsAt, type: 'expense', description: expense.description, detail: 'Despesa pontual', amount: expense.amount, sortOrder: 1 }]
           : []
       }
       if (monthNumber(date) < monthNumber(startsAt)) return []
       const lastDay = new Date(year, month + 1, 0).getDate()
       const occurrence = new Date(year, month, Math.min(expense.recurrenceDay, lastDay))
-      return [{ id: `expense-${expense.id}-${year}-${month}`, date: occurrence, type: 'expense', description: expense.description, detail: `Recorrente · todo dia ${String(expense.recurrenceDay).padStart(2, '0')}`, amount: expense.amount }]
+      return [{ id: `expense-${expense.id}-${year}-${month}`, date: occurrence, type: 'expense', description: expense.description, detail: `Recorrente · todo dia ${String(expense.recurrenceDay).padStart(2, '0')}`, amount: expense.amount, sortOrder: 1 }]
     })
-    return [...income, ...outgoing].sort((a, b) => a.date - b.date || (a.type === 'income' ? -1 : 1))
+    const extraordinary = adjustments.map(adjustment => ({
+      id: `adjustment-${adjustment.id}`,
+      date: parseISO(adjustment.occurredAt),
+      type: adjustment.entryType,
+      description: adjustment.description,
+      detail: 'Entrada extraordinária · conciliação bancária',
+      amount: adjustment.amount,
+      sortOrder: 0,
+    })).filter(item => item.date.getFullYear() === year && item.date.getMonth() === month)
+    return [...extraordinary, ...outgoing, ...income].sort((a, b) => a.date - b.date || a.sortOrder - b.sortOrder)
   }
-  const selectedMovements = useMemo(() => movementsForMonth(anchor), [anchor, expenses, propertyById, reservations])
+  const selectedMovements = useMemo(() => movementsForMonth(anchor), [adjustments, anchor, expenses, propertyById, reservations])
   const totals = movements => movements.reduce((result, item) => ({ ...result, [item.type]: result[item.type] + item.amount }), { income: 0, expense: 0 })
   const selectedTotals = totals(selectedMovements)
-  const dailyClosingBalances = useMemo(() => {
+  const runningBalances = useMemo(() => {
     let balance = 0
     return selectedMovements.reduce((balances, item) => {
       balance += item.type === 'income' ? item.amount : -item.amount
-      balances.set(format(item.date, 'yyyy-MM-dd'), balance)
+      balances.set(item.id, balance)
       return balances
     }, new Map())
   }, [selectedMovements])
@@ -275,7 +285,7 @@ function Finances({ reservations, properties, expenses, onNewExpense }) {
     const monthMovements = movementsForMonth(date)
     const monthTotals = totals(monthMovements)
     return { date, ...monthTotals, balance: monthTotals.income - monthTotals.expense }
-  }), [anchor.getFullYear(), expenses, propertyById, reservations])
+  }), [adjustments, anchor.getFullYear(), expenses, propertyById, reservations])
   const maxMonthlyValue = Math.max(...yearMonths.flatMap(item => [item.income, item.expense]), 1)
   const recurringTotal = expenses.filter(expense => expense.active && expense.expenseType === 'recurring').reduce((sum, expense) => sum + expense.amount, 0)
   const goPrevious = () => setAnchor(current => mode === 'daily' ? subMonths(current, 1) : new Date(current.getFullYear() - 1, current.getMonth(), 1))
@@ -299,7 +309,7 @@ function Finances({ reservations, properties, expenses, onNewExpense }) {
       </div>
       <div className="cash-ledger">
         <div className="cash-ledger-head"><div><p className="eyebrow">Agenda financeira</p><h3>Movimentações de {format(anchor, 'MMMM', { locale: ptBR })}</h3></div><button className="secondary" onClick={onNewExpense}><Plus /> Registrar despesa</button></div>
-        {selectedMovements.length ? <><div className="movement-columns"><span>Movimentação</span><span>Saldo da conta</span></div><div className="movement-list">{selectedMovements.map(item => { const closingBalance = dailyClosingBalances.get(format(item.date, 'yyyy-MM-dd')); return <div className="movement-row" key={item.id}><time dateTime={format(item.date, 'yyyy-MM-dd')}><b>{format(item.date, 'dd')}</b><span>{format(item.date, 'EEE', { locale: ptBR })}</span></time><i className={item.type}><span>{item.type === 'income' ? <ArrowUp /> : <ArrowDown />}</span></i><div><strong>{item.description}</strong><small>{item.detail}</small></div><b className={`movement-amount ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.amount)}</b><b className={`running-balance ${closingBalance < 0 ? 'negative' : 'positive'}`}>{money.format(closingBalance)}</b></div>})}</div></> : <p className="empty-state">Nenhuma movimentação prevista para este mês.</p>}
+        {selectedMovements.length ? <><div className="movement-columns"><span>Movimentação</span><span>Saldo da conta</span></div><div className="movement-list">{selectedMovements.map(item => { const runningBalance = runningBalances.get(item.id); return <div className="movement-row" key={item.id}><time dateTime={format(item.date, 'yyyy-MM-dd')}><b>{format(item.date, 'dd')}</b><span>{format(item.date, 'EEE', { locale: ptBR })}</span></time><i className={item.type}><span>{item.type === 'income' ? <ArrowUp /> : <ArrowDown />}</span></i><div><strong>{item.description}</strong><small>{item.detail}</small></div><b className={`movement-amount ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.amount)}</b><b className={`running-balance ${runningBalance < 0 ? 'negative' : 'positive'}`}>{money.format(runningBalance)}</b></div>})}</div></> : <p className="empty-state">Nenhuma movimentação prevista para este mês.</p>}
       </div>
     </> : <div className="monthly-flow">
       <div className="monthly-flow-head"><div><p className="eyebrow">Ano completo</p><h3>Entradas e saídas mês a mês</h3></div><div className="flow-legend"><span><i className="income"/>Entradas</span><span><i className="expense"/>Saídas</span></div></div>
@@ -357,6 +367,7 @@ export default function App() {
   const [properties,setProperties]=useState([])
   const [reservations,setReservations]=useState([])
   const [expenses,setExpenses]=useState([])
+  const [adjustments,setAdjustments]=useState([])
   const [modal,setModal]=useState(null)
   const [expenseModal,setExpenseModal]=useState(false)
   const [toast,setToast]=useState('')
@@ -366,9 +377,9 @@ export default function App() {
     return ()=>subscription.unsubscribe()
   },[])
   useEffect(()=>{
-    if(!session){setProperties([]);setReservations([]);setExpenses([]);setOrganizationId(null);return}
+    if(!session){setProperties([]);setReservations([]);setExpenses([]);setAdjustments([]);setOrganizationId(null);return}
     setLoading(true)
-    loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
+    loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses);setAdjustments(data.adjustments)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
   },[session])
   const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',reservations:'Reservas',properties:'Imóveis',finances:'Finanças pessoais'}
   const showToast=message=>{setToast(message);window.setTimeout(()=>setToast(''),5000)}
@@ -380,5 +391,5 @@ export default function App() {
   if(!session)return <Login onLogin={login} />
   if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
   const newAction = view === 'finances' ? () => setExpenseModal(true) : () => setModal('new')
-  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} onNewExpense={()=>setExpenseModal(true)}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} onNewExpense={()=>setExpenseModal(true)}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }
