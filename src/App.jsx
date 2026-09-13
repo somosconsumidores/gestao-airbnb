@@ -5,7 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, Receipt, SignOut, Wallet, WarningCircle, X } from '@phosphor-icons/react'
-import { deleteExpenseOverride, loadPortfolio, loginEmail, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
+import { deleteExpenseOverride, loadPortfolio, loginEmail, saveCashIncome, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
@@ -51,8 +51,8 @@ function Sidebar({ view, setView, logout }) {
   </aside>
 }
 
-function Topbar({ title, onNew, actionLabel = 'Nova reserva' }) {
-  return <header className="topbar"><div><p>{format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}</p><h1>{title}</h1></div><button className="primary" onClick={onNew}><Plus weight="bold" /> {actionLabel}</button></header>
+function Topbar({ title, onNew, actionLabel = 'Nova reserva', secondaryAction, secondaryLabel }) {
+  return <header className="topbar"><div><p>{format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}</p><h1>{title}</h1></div><div className="topbar-actions">{secondaryAction && <button className="secondary income-action" onClick={secondaryAction}><ArrowUp weight="bold" /> {secondaryLabel}</button>}<button className="primary" onClick={onNew}><Plus weight="bold" /> {actionLabel}</button></div></header>
 }
 
 function Dashboard({ reservations, properties, setView, onNew }) {
@@ -225,7 +225,7 @@ function Properties({ properties, onSaveProperty, reservations, setView }) {
   </>
 }
 
-function Finances({ reservations, properties, expenses, adjustments, expenseOverrides, onNewExpense, onEditExpense }) {
+function Finances({ reservations, properties, expenses, adjustments, expenseOverrides, onNewExpense, onNewIncome, onEditExpense }) {
   const [mode, setMode] = useState('daily')
   const [anchor, setAnchor] = useState(() => startOfMonth(new Date()))
   const propertyById = useMemo(() => new Map(properties.map(property => [property.id, property])), [properties])
@@ -266,7 +266,7 @@ function Finances({ reservations, properties, expenses, adjustments, expenseOver
       date: parseISO(adjustment.occurredAt),
       type: adjustment.entryType,
       description: adjustment.description,
-      detail: 'Entrada extraordinária · conciliação bancária',
+      detail: adjustment.sourceKey === 'opening-adjustment-2026-09-03' ? 'Entrada extraordinária · conciliação bancária' : adjustment.entryType === 'income' ? 'Receita pontual' : 'Despesa pontual',
       amount: adjustment.amount,
       sortOrder: 0,
     })).filter(item => item.date.getFullYear() === year && item.date.getMonth() === month)
@@ -334,7 +334,7 @@ function Finances({ reservations, properties, expenses, adjustments, expenseOver
         <article className={closingBalance < 0 ? 'negative' : ''}><span><Wallet /> Saldo projetado</span><strong>{money.format(closingBalance)}</strong><small>Saldo inicial + movimentações</small></article>
       </div>
       <div className="cash-ledger">
-        <div className="cash-ledger-head"><div><p className="eyebrow">Agenda financeira</p><h3>Movimentações de {format(anchor, 'MMMM', { locale: ptBR })}</h3></div><button className="secondary" onClick={onNewExpense}><Plus /> Registrar despesa</button></div>
+        <div className="cash-ledger-head"><div><p className="eyebrow">Agenda financeira</p><h3>Movimentações de {format(anchor, 'MMMM', { locale: ptBR })}</h3></div><div className="ledger-actions"><button className="secondary income-action" onClick={onNewIncome}><ArrowUp /> Registrar receita</button><button className="secondary" onClick={onNewExpense}><Plus /> Registrar despesa</button></div></div>
         <div className="ledger-opening"><span>{monthNumber(anchor) === monthNumber(cashFlowStart) ? 'Saldo inicial do controle' : `Saldo trazido de ${format(subMonths(anchor, 1), 'MMMM', { locale: ptBR })}`}</span><strong className={openingBalance < 0 ? 'negative' : ''}>{money.format(openingBalance)}</strong></div>
         {selectedMovements.length ? <><div className="movement-columns"><span>Movimentação</span><span>Saldo da conta</span></div><div className="movement-list">{selectedMovements.map(item => { const runningBalance = runningBalances.get(item.id); return <div className={`movement-row ${item.override ? 'has-override' : ''}`} key={item.id}><time dateTime={format(item.date, 'yyyy-MM-dd')}><b>{format(item.date, 'dd')}</b><span>{format(item.date, 'EEE', { locale: ptBR })}</span></time><i className={item.type}><span>{item.type === 'income' ? <ArrowUp /> : <ArrowDown />}</span></i><div><strong>{item.description}</strong><small>{item.detail}</small>{item.expense && <button type="button" className="adjust-expense" onClick={() => onEditExpense({ expense: item.expense, month: item.month, override: item.override })}><PencilSimple /> {item.override ? 'Editar ajuste' : 'Ajustar mês'}</button>}</div><b className={`movement-amount ${item.type}`}>{item.type === 'income' ? '+' : '−'} {money.format(item.amount)}</b><b className={`running-balance ${runningBalance < 0 ? 'negative' : 'positive'}`}>{money.format(runningBalance)}</b></div>})}</div></> : <p className="empty-state">Nenhuma movimentação prevista para este mês.</p>}
       </div>
@@ -391,6 +391,21 @@ function ExpenseModal({ onClose, onSave }) {
   return <div className="modal-backdrop"><form className="modal expense-modal" onSubmit={submit}><button type="button" className="modal-close" onClick={onClose}><X /></button><p className="eyebrow">Nova saída</p><h2>Registrar despesa</h2><div className="form-grid"><label className="wide">Natureza da despesa<input required name="description" value={form.description} onChange={update} placeholder="Ex.: Plano de saúde" /></label><label>Valor<input required min="0.01" step="0.01" type="number" name="amount" value={form.amount} onChange={update} placeholder="R$ 0,00" /></label><label>Tipo<select name="expenseType" value={form.expenseType} onChange={update}><option value="recurring">Recorrente</option><option value="one_time">Pontual</option></select></label>{form.expenseType === 'recurring' ? <><label>Dia da recorrência<select name="recurrenceDay" value={form.recurrenceDay} onChange={update}>{Array.from({ length: 31 }, (_, index) => <option key={index + 1} value={index + 1}>Todo dia {String(index + 1).padStart(2, '0')}</option>)}</select></label><label>Começa em<input required type="month" name="startMonth" value={form.startMonth} onChange={update} /></label></> : <label className="wide">Data da despesa<input required type="date" name="incurredOn" value={form.incurredOn} onChange={update} /></label>}</div>{error && <p className="form-error"><WarningCircle />{error}</p>}<button className="primary full" disabled={saving}>{saving ? 'Salvando…' : 'Adicionar ao fluxo de caixa'} {!saving && <ArrowRight />}</button></form></div>
 }
 
+function IncomeModal({ onClose, onSave }) {
+  const [form, setForm] = useState({ description: '', amount: '', occurredOn: format(new Date(), 'yyyy-MM-dd'), notes: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const update = event => setForm(current => ({ ...current, [event.target.name]: event.target.value }))
+  const submit = async event => {
+    event.preventDefault()
+    setError('')
+    if (Number(form.amount) <= 0) { setError('Informe um valor maior que zero.'); return }
+    setSaving(true)
+    try { await onSave(form) } catch { setError('Não foi possível salvar a receita. Revise os dados e tente novamente.') } finally { setSaving(false) }
+  }
+  return <div className="modal-backdrop"><form className="modal income-modal" onSubmit={submit}><button type="button" className="modal-close" onClick={onClose}><X /></button><p className="eyebrow">Nova entrada</p><h2>Registrar receita</h2><div className="income-modal-intro"><span><ArrowUp weight="bold" /></span><p>Esta receita entra no saldo da conta na data informada, junto com os recebimentos das reservas.</p></div><div className="form-grid"><label className="wide">Descrição da receita<input required name="description" value={form.description} onChange={update} placeholder="Ex.: Reembolso ou trabalho pontual" /></label><label>Valor<input required min="0.01" step="0.01" type="number" name="amount" value={form.amount} onChange={update} placeholder="R$ 0,00" /></label><label>Data da entrada<input required type="date" name="occurredOn" value={form.occurredOn} onChange={update} /></label><label className="wide">Observação (opcional)<input name="notes" value={form.notes} onChange={update} placeholder="Inclua um detalhe para lembrar a origem" /></label></div>{error && <p className="form-error"><WarningCircle />{error}</p>}<button className="primary income-primary full" disabled={saving}>{saving ? 'Salvando…' : 'Adicionar receita ao fluxo'} {!saving && <ArrowRight />}</button></form></div>
+}
+
 function ReservationModal({ properties, reservation, onClose, onSave }) {
   const isEditing = Boolean(reservation)
   const localDateTime = value => value ? format(parseISO(value), "yyyy-MM-dd'T'HH:mm") : ''
@@ -425,6 +440,7 @@ export default function App() {
   const [expenseOverrides,setExpenseOverrides]=useState([])
   const [modal,setModal]=useState(null)
   const [expenseModal,setExpenseModal]=useState(false)
+  const [incomeModal,setIncomeModal]=useState(false)
   const [overrideModal,setOverrideModal]=useState(null)
   const [toast,setToast]=useState('')
   useEffect(()=>{
@@ -443,11 +459,12 @@ export default function App() {
   const save=async form=>{if(form.id){try{const reservation=await updateReservation({organizationId,form});setReservations(current=>current.map(item=>item.id===reservation.id?reservation:item).sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null);showToast('Reserva atualizada com sucesso.');return}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível atualizar a reserva: ${error.message}`);throw error}}let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível salvar a reserva: ${error.message}`);throw error}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
   const savePropertyRecord=async form=>{try{const property=await saveProperty({organizationId,id:form.id,name:form.name,address:form.address,color:form.color,photoFile:form.photoFile,currentPhotoPath:form.photoPath});setProperties(current=>form.id?current.map(item=>item.id===property.id?property:item):[...current,property]);showToast('Imóvel salvo com sucesso.')}catch(error){showToast(`Não foi possível salvar o imóvel: ${error.message}`);throw error}}
   const saveExpenseRecord=async form=>{try{const expense=await saveExpense({organizationId,form});setExpenses(current=>[...current,expense].sort((a,b)=>a.incurredOn.localeCompare(b.incurredOn)));setExpenseModal(false);showToast('Despesa adicionada ao fluxo de caixa.')}catch(error){showToast(`Não foi possível salvar a despesa: ${error.message}`);throw error}}
+  const saveIncomeRecord=async form=>{try{const income=await saveCashIncome({organizationId,form});setAdjustments(current=>[...current,income].sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)));setIncomeModal(false);showToast('Receita adicionada ao fluxo de caixa.')}catch(error){showToast(`Não foi possível salvar a receita: ${error.message}`);throw error}}
   const saveOverrideRecord=async form=>{try{const override=await saveExpenseOverride({organizationId,...form});setExpenseOverrides(current=>[...current.filter(item=>!(item.expenseId===override.expenseId&&item.month===override.month)),override]);setOverrideModal(null);showToast('Previsão mensal ajustada sem alterar a recorrência.')}catch(error){showToast(`Não foi possível ajustar a previsão: ${error.message}`);throw error}}
   const resetOverrideRecord=async form=>{try{await deleteExpenseOverride({organizationId,...form});setExpenseOverrides(current=>current.filter(item=>!(item.expenseId===form.expenseId&&item.month===form.month)));setOverrideModal(null);showToast('Valor recorrente restaurado para este mês.')}catch(error){showToast(`Não foi possível restaurar a recorrência: ${error.message}`);throw error}}
   if(!authReady)return <main className="login-page"><section className="login-panel"><p className="muted">Validando acesso seguro…</p></section></main>
   if(!session)return <Login onLogin={login} />
   if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
   const newAction = view === 'finances' ? () => setExpenseModal(true) : () => setModal('new')
-  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'}/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'} secondaryAction={view === 'finances' ? () => setIncomeModal(true) : null} secondaryLabel="Nova receita"/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onNewIncome={()=>setIncomeModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {incomeModal&&<IncomeModal onClose={()=>setIncomeModal(false)} onSave={saveIncomeRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }

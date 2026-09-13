@@ -69,6 +69,7 @@ export const toCashAdjustment = row => ({
   amount: Number(row.amount),
   occurredAt: row.occurred_at,
   notes: row.notes || '',
+  sourceKey: row.source_key || '',
 })
 
 export const toExpenseOverride = row => ({
@@ -232,6 +233,20 @@ export async function saveExpense({ organizationId, form }) {
   }).select().single()
   if (error) throw error
   return toExpense(data)
+}
+
+export async function saveCashIncome({ organizationId, form }) {
+  const occurredAt = new Date(`${form.occurredOn}T12:00:00`).toISOString()
+  const { data, error } = await supabase.from('cash_adjustments').insert({
+    organization_id: organizationId,
+    description: form.description.trim(),
+    entry_type: 'income',
+    amount: Number(form.amount),
+    occurred_at: occurredAt,
+    notes: form.notes.trim() || null,
+  }).select().single()
+  if (error) throw error
+  return toCashAdjustment(data)
 }
 
 export async function saveExpenseOverride({ organizationId, expenseId, month, amount }) {
