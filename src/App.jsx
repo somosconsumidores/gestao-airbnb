@@ -87,11 +87,14 @@ function Dashboard({ reservations, properties, setView, onNew }) {
   const forecastNights = forecastReservations.reduce((sum, reservation) => sum + stayNights(reservation), 0)
   const totalDailyNights = paidNights + forecastNights
   const averageDailyRate = totalDailyNights ? (paidRevenue + forecastRevenue) / totalDailyNights : 0
-  const scheduledReservations = forecastReservations.filter(reservation =>
-    scheduledPropertyId === 'all' || reservation.propertyId === scheduledPropertyId
-  )
-  const scheduledRevenue = scheduledReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
-  const scheduledRevenueByMonth = Object.values(scheduledReservations.reduce((months, reservation) => {
+  const monthlyRevenueReservations = financialReservations.filter(reservation => {
+    const hasRecognizedRevenue = reservation.status !== 'Cancelada' || /valor recebido/i.test(reservation.notes)
+    return hasRecognizedRevenue
+      && parseISO(reservation.checkin) >= monthStart
+      && (scheduledPropertyId === 'all' || reservation.propertyId === scheduledPropertyId)
+  })
+  const monthlyRevenue = monthlyRevenueReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
+  const revenueByMonth = Object.values(monthlyRevenueReservations.reduce((months, reservation) => {
     const checkin = parseISO(reservation.checkin)
     const key = format(checkin, 'yyyy-MM')
     months[key] ||= { key, date: checkin, value: 0, bookings: 0 }
@@ -99,7 +102,7 @@ function Dashboard({ reservations, properties, setView, onNew }) {
     months[key].bookings += 1
     return months
   }, {})).sort((a, b) => a.key.localeCompare(b.key))
-  const maxScheduledRevenue = Math.max(...scheduledRevenueByMonth.map(month => month.value), 1)
+  const maxMonthlyRevenue = Math.max(...revenueByMonth.map(month => month.value), 1)
   const next = [...activeReservations].filter(reservation => parseISO(reservation.checkout) >= now).sort((a,b) => a.checkin.localeCompare(b.checkin))[0]
   const prop = id => properties.find(p => p.id === id)
   const propertyStats = property => {
@@ -131,14 +134,14 @@ function Dashboard({ reservations, properties, setView, onNew }) {
       <article className="metric-card"><div className="metric-head"><span>Diária média geral</span><ChartLineUp /></div><strong>{money.format(averageDailyRate)}</strong><p>{money.format(paidRevenue + forecastRevenue)} ÷ {totalDailyNights} noites pagas e previstas</p></article>
     </section>
     <section className="scheduled-revenue-card">
-      <div className="scheduled-revenue-copy"><div><p className="eyebrow">Previsão de caixa</p><h2>Receita programada mês a mês</h2></div><div className="scheduled-revenue-side"><label className="scheduled-property-filter"><span>Filtrar imóvel</span><select value={scheduledPropertyId} onChange={event => setScheduledPropertyId(event.target.value)}><option value="all">Todos os imóveis</option>{properties.map(property => <option key={property.id} value={property.id}>{property.name}</option>)}</select><CaretDown /></label><div className="scheduled-total"><span>Total programado</span><strong>{money.format(scheduledRevenue)}</strong><small>{scheduledReservations.length} {scheduledReservations.length === 1 ? 'reserva futura' : 'reservas futuras'}</small></div></div></div>
-      {scheduledRevenueByMonth.length ? <div className="scheduled-chart" role="img" aria-label="Gráfico de barras da receita programada por mês">
-        {scheduledRevenueByMonth.map(month => <div className="scheduled-column" key={month.key}>
+      <div className="scheduled-revenue-copy"><div><p className="eyebrow">Realizada + programada</p><h2>Receita total mês a mês</h2></div><div className="scheduled-revenue-side"><label className="scheduled-property-filter"><span>Filtrar imóvel</span><select value={scheduledPropertyId} onChange={event => setScheduledPropertyId(event.target.value)}><option value="all">Todos os imóveis</option>{properties.map(property => <option key={property.id} value={property.id}>{property.name}</option>)}</select><CaretDown /></label><div className="scheduled-total"><span>Total do período</span><strong>{money.format(monthlyRevenue)}</strong><small>{monthlyRevenueReservations.length} {monthlyRevenueReservations.length === 1 ? 'reserva com receita' : 'reservas com receita'}</small></div></div></div>
+      {revenueByMonth.length ? <div className="scheduled-chart" role="img" aria-label="Gráfico de barras da receita realizada e programada por mês">
+        {revenueByMonth.map(month => <div className="scheduled-column" key={month.key}>
           <strong>{money.format(month.value)}</strong>
-          <div className="scheduled-track"><i style={{height:`${Math.max(8, (month.value / maxScheduledRevenue) * 100)}%`}}><span>{month.bookings}</span></i></div>
+          <div className="scheduled-track"><i style={{height:`${Math.max(8, (month.value / maxMonthlyRevenue) * 100)}%`}}><span>{month.bookings}</span></i></div>
           <div><b>{format(month.date, 'MMM', { locale: ptBR })}</b><small>{format(month.date, 'yyyy')}</small></div>
         </div>)}
-      </div> : <p className="empty-state">Ainda não há receita programada para os próximos meses.</p>}
+      </div> : <p className="empty-state">Ainda não há receita realizada ou programada para este período.</p>}
     </section>
     <section className="section-head"><div><p className="eyebrow">Portfólio ativo</p><h2>O pulso de cada endereço</h2></div><button className="text-button" onClick={() => setView('properties')}>Ver todos <ArrowRight /></button></section>
     <section className="property-row">{properties.map(p => {const stats=propertyStats(p);return <article className="property-card group" key={p.id}><div className="image-wrap"><img className="property-image" src={p.image} alt={p.name} /><span style={{background:p.color}}>{p.status}</span></div><div><small>{p.address}</small><h3>{p.name}</h3><p>{stats.occupied}% ocupado · {money.format(stats.earnings)}</p></div></article>})}</section>
