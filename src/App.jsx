@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import AnalyticsDashboard from './AnalyticsDashboard'
+import { isReceived } from './lib/analytics'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
@@ -144,8 +145,7 @@ function Finances({ reservations, properties, expenses, adjustments, expenseOver
   const overrideByExpenseMonth = useMemo(() => new Map(expenseOverrides.map(override => [`${override.expenseId}-${override.month}`, override])), [expenseOverrides])
   const isFinancialReservation = reservation => Number(reservation.value) > 0
     && (reservation.status !== 'Cancelada' || /valor recebido/i.test(reservation.notes))
-  const isPaidReservation = reservation => ['Check-in', 'Check-out'].includes(reservation.status)
-    || (reservation.status === 'Cancelada' && /valor recebido/i.test(reservation.notes))
+  const isPaidReservation = reservation => isReceived(reservation)
   const monthNumber = date => date.getFullYear() * 12 + date.getMonth()
   const movementsForMonth = date => {
     const year = date.getFullYear(), month = date.getMonth()

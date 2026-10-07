@@ -1,7 +1,18 @@
 import { addMonths, differenceInCalendarDays, format, parseISO, startOfMonth } from 'date-fns'
 
-export const isReceived = r => ['Check-in', 'Check-out'].includes(r.status) || (r.status === 'Cancelada' && /valor recebido/i.test(r.notes || ''))
-export const validRevenue = r => Number(r.value) > 0 && (r.status !== 'Cancelada' || isReceived(r))
+const businessDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' })
+export const businessDate = value => {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?$/.test(value)) return value.slice(0, 10)
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const parts = businessDateFormatter.formatToParts(date)
+  return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type).value).join('-')
+}
+export const validRevenue = r => Number(r.value) > 0 && (r.status !== 'Cancelada' || /valor recebido/i.test(r.notes || ''))
+export const isReceived = (r, today = businessDate(new Date())) => {
+  const checkinDay = businessDate(r.checkin)
+  return validRevenue(r) && checkinDay !== null && checkinDay <= today
+}
 export const monthKey = date => format(date, 'yyyy-MM')
 const nights = r => Math.max(0, differenceInCalendarDays(parseISO(r.checkout), parseISO(r.checkin)))
 
@@ -10,7 +21,7 @@ export function historyBounds(reservations, now = new Date()) {
   return { from: months[0] || monthKey(now), to: months.at(-1) || monthKey(now) }
 }
 
-export function analyze(reservations, properties, propertyId, from, to) {
+export function analyze(reservations, properties, propertyId, from, to, today = businessDate(new Date())) {
   const selectedProperties = properties.filter(p => propertyId === 'all' || p.id === propertyId)
   const ids = new Set(selectedProperties.map(p => p.id))
   const selected = reservations.filter(r => ids.has(r.propertyId))
@@ -20,8 +31,8 @@ export function analyze(reservations, properties, propertyId, from, to) {
     const next = addMonths(date, 1)
     const bookings = selected.filter(r => parseISO(r.checkin) >= date && parseISO(r.checkin) < next)
     const financial = bookings.filter(validRevenue)
-    const received = financial.filter(isReceived).reduce((sum, r) => sum + Number(r.value), 0)
-    const scheduled = financial.filter(r => !isReceived(r)).reduce((sum, r) => sum + Number(r.value), 0)
+    const received = financial.filter(r => isReceived(r, today)).reduce((sum, r) => sum + Number(r.value), 0)
+    const scheduled = financial.filter(r => !isReceived(r, today)).reduce((sum, r) => sum + Number(r.value), 0)
     // Unique property-nights prevent overlapping reservations from inflating occupancy.
     const occupied = new Set()
     selected.filter(r => r.status !== 'Cancelada').forEach(r => {
@@ -42,7 +53,7 @@ export function analyze(reservations, properties, propertyId, from, to) {
   const occupied = monthly.reduce((s, m) => s + m.occupied, 0)
   const comparison = selectedProperties.map(p => {
     const rows = bookings.filter(r => r.propertyId === p.id && validRevenue(r))
-    return { ...p, total: rows.reduce((s, r) => s + Number(r.value), 0), received: rows.filter(isReceived).reduce((s, r) => s + Number(r.value), 0) }
+    return { ...p, total: rows.reduce((s, r) => s + Number(r.value), 0), received: rows.filter(r => isReceived(r, today)).reduce((s, r) => s + Number(r.value), 0) }
   }).sort((a, b) => b.total - a.total)
   return { monthly, total, received, scheduled: total - received, occupancy: capacity ? occupied / capacity * 100 : 0, adr: paidNights ? stayRevenue / paidNights : 0, revpar: capacity ? stayRevenue / capacity : 0, nights: occupied, stays: stays.length, length: stays.length ? stays.reduce((s, r) => s + nights(r), 0) / stays.length : 0, cancellation: bookings.length ? (bookings.length - stays.length) / bookings.length * 100 : 0, comparison }
 }
