@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import AnalyticsDashboard from './AnalyticsDashboard'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
@@ -8,6 +9,8 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Buildings, CalendarBlank, Ca
 import { deleteExpenseOverride, loadPortfolio, loginEmail, saveCashIncome, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
+
+const Dashboard = AnalyticsDashboard
 
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 const normalizeSearch = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -53,100 +56,6 @@ function Sidebar({ view, setView, logout }) {
 
 function Topbar({ title, onNew, actionLabel = 'Nova reserva', secondaryAction, secondaryLabel }) {
   return <header className="topbar"><div><p>{format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}</p><h1>{title}</h1></div><div className="topbar-actions">{secondaryAction && <button className="secondary income-action" onClick={secondaryAction}><ArrowUp weight="bold" /> {secondaryLabel}</button>}<button className="primary" onClick={onNew}><Plus weight="bold" /> {actionLabel}</button></div></header>
-}
-
-function Dashboard({ reservations, properties, setView, onNew }) {
-  const [scheduledPropertyId, setScheduledPropertyId] = useState('all')
-  const financialReservations = reservations.filter(reservation => Number(reservation.value) > 0)
-  const activeReservations = reservations.filter(reservation => reservation.status !== 'Cancelada')
-  const paidReservations = financialReservations.filter(reservation =>
-    ['Check-in', 'Check-out'].includes(reservation.status)
-    || (reservation.status === 'Cancelada' && /valor recebido/i.test(reservation.notes))
-  )
-  const paidStays = paidReservations.filter(reservation => reservation.status !== 'Cancelada')
-  const paidRevenue = paidReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
-  const now = new Date()
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-  const nightsInMonth = reservation => Math.max(0, (Math.min(parseISO(reservation.checkout), monthEnd) - Math.max(parseISO(reservation.checkin), monthStart)) / 86400000)
-  const stayNights = reservation => {
-    const checkin = parseISO(reservation.checkin)
-    const checkout = parseISO(reservation.checkout)
-    const checkinDate = new Date(checkin.getFullYear(), checkin.getMonth(), checkin.getDate())
-    const checkoutDate = new Date(checkout.getFullYear(), checkout.getMonth(), checkout.getDate())
-    return Math.max(0, Math.round((checkoutDate - checkinDate) / 86400000))
-  }
-  const occupiedNights = activeReservations.reduce((sum, reservation) => sum + nightsInMonth(reservation), 0)
-  const occupancy = properties.length ? Math.min(100, Math.round((occupiedNights / (properties.length * ((monthEnd - monthStart) / 86400000))) * 100)) : 0
-  const forecastReservations = activeReservations.filter(reservation =>
-    ['Confirmada', 'Pendente'].includes(reservation.status)
-    && parseISO(reservation.checkout) >= now
-  )
-  const forecastRevenue = forecastReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
-  const paidNights = paidStays.reduce((sum, reservation) => sum + stayNights(reservation), 0)
-  const forecastNights = forecastReservations.reduce((sum, reservation) => sum + stayNights(reservation), 0)
-  const totalDailyNights = paidNights + forecastNights
-  const averageDailyRate = totalDailyNights ? (paidRevenue + forecastRevenue) / totalDailyNights : 0
-  const monthlyRevenueReservations = financialReservations.filter(reservation => {
-    const hasRecognizedRevenue = reservation.status !== 'Cancelada' || /valor recebido/i.test(reservation.notes)
-    return hasRecognizedRevenue
-      && parseISO(reservation.checkin) >= monthStart
-      && (scheduledPropertyId === 'all' || reservation.propertyId === scheduledPropertyId)
-  })
-  const monthlyRevenue = monthlyRevenueReservations.reduce((sum, reservation) => sum + Number(reservation.value), 0)
-  const revenueByMonth = Object.values(monthlyRevenueReservations.reduce((months, reservation) => {
-    const checkin = parseISO(reservation.checkin)
-    const key = format(checkin, 'yyyy-MM')
-    months[key] ||= { key, date: checkin, value: 0, bookings: 0 }
-    months[key].value += Number(reservation.value)
-    months[key].bookings += 1
-    return months
-  }, {})).sort((a, b) => a.key.localeCompare(b.key))
-  const maxMonthlyRevenue = Math.max(...revenueByMonth.map(month => month.value), 1)
-  const next = [...activeReservations].filter(reservation => parseISO(reservation.checkout) >= now).sort((a,b) => a.checkin.localeCompare(b.checkin))[0]
-  const prop = id => properties.find(p => p.id === id)
-  const propertyStats = property => {
-    const financialBookings = financialReservations.filter(reservation => reservation.propertyId === property.id)
-    const operationalBookings = activeReservations.filter(reservation => reservation.propertyId === property.id)
-    const earnings = financialBookings.reduce((sum, reservation) => sum + Number(reservation.value), 0)
-    const nights = operationalBookings.reduce((sum, reservation) => sum + nightsInMonth(reservation), 0)
-    const occupied = Math.min(100, Math.round((nights / ((monthEnd - monthStart) / 86400000)) * 100))
-    return { earnings, occupied }
-  }
-  const root = useRef()
-  useGSAP(() => {
-    const media = gsap.matchMedia()
-    media.add('(min-width: 681px) and (prefers-reduced-motion: no-preference)', () => {
-      gsap.from('.hero-copy > *', { y: 28, opacity: 0, stagger: .08, duration: .7, ease: 'power3.out' })
-      gsap.from('.metric-card', { y: 34, opacity: 0, stagger: .1, duration: .7, delay: .15, ease: 'power3.out' })
-      gsap.utils.toArray('.property-image').forEach(img => gsap.fromTo(img, { scale: .8, opacity: .55 }, { scale: 1, opacity: 1, scrollTrigger: { trigger: img, start: 'top 92%', end: 'bottom 35%', scrub: .7 } }))
-    })
-    return () => media.revert()
-  }, { scope: root })
-  return <div ref={root}>
-    <section className="hero-split">
-      <div className="hero-copy"><p className="eyebrow">Setembro em movimento</p><h2>Gestão Airbnb <span className="inline-photo" /> mais inteligente.</h2><p>Uma leitura clara do que entra, do que sai e do que merece sua atenção agora.</p><div className="hero-actions"><button className="primary" onClick={onNew}>Cadastrar reserva <ArrowRight /></button><button className="secondary" onClick={() => setView('calendar')}>Abrir calendário</button></div></div>
-      <div className="hero-visual"><img src="https://picsum.photos/seed/rio-modern-home/1200/1000" alt="Interior contemporâneo de apartamento" /><div className="next-stay"><Clock /><div><span>Próximo check-in</span><strong>{next ? format(parseISO(next.checkin), "d MMM 'às' HH:mm", { locale: ptBR }) : 'Nenhum'}</strong><small>{next?.guest} · {prop(next?.propertyId)?.short}</small></div></div></div>
-    </section>
-    <section className="metrics-grid">
-      <article className="metric-card revenue"><div className="metric-head"><span>Receita paga</span><CurrencyDollar /></div><strong>{money.format(paidRevenue)}</strong><p><b>{paidStays.length}</b> {paidStays.length===1?'estadia paga':'estadias pagas'}</p><svg viewBox="0 0 500 100" preserveAspectRatio="none"><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8" fill="none" stroke="#E65C00" strokeWidth="4"/><path d="M0 84 C55 72 72 82 120 60 S205 74 252 42 S340 50 390 24 S455 38 500 8 L500 100 L0 100Z" fill="url(#grad)"/><defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"><stop stopColor="#E65C00" stopOpacity=".22"/><stop offset="1" stopColor="#E65C00" stopOpacity="0"/></linearGradient></defs></svg></article>
-      <article className="metric-card"><div className="metric-head"><span>Taxa de ocupação</span><CalendarBlank /></div><strong>{occupancy}<span>%</span></strong><div className="progress"><i style={{width:`${occupancy}%`}} /></div><p>Calculada sobre o mês atual</p></article>
-      <article className="metric-card"><div className="metric-head"><span>Diária média geral</span><ChartLineUp /></div><strong>{money.format(averageDailyRate)}</strong><p>{money.format(paidRevenue + forecastRevenue)} ÷ {totalDailyNights} noites pagas e previstas</p></article>
-    </section>
-    <section className="scheduled-revenue-card">
-      <div className="scheduled-revenue-copy"><div><p className="eyebrow">Realizada + programada</p><h2>Receita total mês a mês</h2></div><div className="scheduled-revenue-side"><label className="scheduled-property-filter"><span>Filtrar imóvel</span><select value={scheduledPropertyId} onChange={event => setScheduledPropertyId(event.target.value)}><option value="all">Todos os imóveis</option>{properties.map(property => <option key={property.id} value={property.id}>{property.name}</option>)}</select><CaretDown /></label><div className="scheduled-total"><span>Total do período</span><strong>{money.format(monthlyRevenue)}</strong><small>{monthlyRevenueReservations.length} {monthlyRevenueReservations.length === 1 ? 'reserva com receita' : 'reservas com receita'}</small></div></div></div>
-      {revenueByMonth.length ? <div className="scheduled-chart" role="img" aria-label="Gráfico de barras da receita realizada e programada por mês">
-        {revenueByMonth.map(month => <div className="scheduled-column" key={month.key}>
-          <strong>{money.format(month.value)}</strong>
-          <div className="scheduled-track"><i style={{height:`${Math.max(8, (month.value / maxMonthlyRevenue) * 100)}%`}}><span>{month.bookings}</span></i></div>
-          <div><b>{format(month.date, 'MMM', { locale: ptBR })}</b><small>{format(month.date, 'yyyy')}</small></div>
-        </div>)}
-      </div> : <p className="empty-state">Ainda não há receita realizada ou programada para este período.</p>}
-    </section>
-    <section className="section-head"><div><p className="eyebrow">Portfólio ativo</p><h2>O pulso de cada endereço</h2></div><button className="text-button" onClick={() => setView('properties')}>Ver todos <ArrowRight /></button></section>
-    <section className="property-row">{properties.map(p => {const stats=propertyStats(p);return <article className="property-card group" key={p.id}><div className="image-wrap"><img className="property-image" src={p.image} alt={p.name} /><span style={{background:p.color}}>{p.status}</span></div><div><small>{p.address}</small><h3>{p.name}</h3><p>{stats.occupied}% ocupado · {money.format(stats.earnings)}</p></div></article>})}</section>
-    <section className="marquee"><div>CHECK-IN CLARO · RECEITA VISÍVEL · OPERAÇÃO TRANQUILA · CHECK-IN CLARO · RECEITA VISÍVEL · OPERAÇÃO TRANQUILA ·</div></section>
-  </div>
 }
 
 function CalendarView({ reservations, properties, onNew }) {
