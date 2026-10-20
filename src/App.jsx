@@ -4,7 +4,7 @@ import { isReceived } from './lib/analytics'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
+import { addDays, addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, Receipt, SignOut, Wallet, WarningCircle, X } from '@phosphor-icons/react'
 import { deleteExpenseOverride, loadPortfolio, loginEmail, saveCashIncome, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
@@ -64,7 +64,7 @@ function CalendarView({ reservations, properties, onNew }) {
   const start = startOfMonth(month), end = endOfMonth(month)
   const days = eachDayOfInterval({ start, end })
   const blanks = Array((start.getDay() + 6) % 7).fill(null)
-  const dayReservations = day => reservations.flatMap(reservation => {
+  const dayReservations = day => reservations.filter(reservation => reservation.status !== 'Cancelada').flatMap(reservation => {
     const checkin = parseISO(reservation.checkin)
     const checkout = parseISO(reservation.checkout)
     const checkinDate = new Date(checkin.getFullYear(), checkin.getMonth(), checkin.getDate())
@@ -321,6 +321,9 @@ function IncomeModal({ onClose, onSave }) {
 function ReservationModal({ properties, reservation, onClose, onSave }) {
   const isEditing = Boolean(reservation)
   const localDateTime = value => value ? format(parseISO(value), "yyyy-MM-dd'T'HH:mm") : ''
+  const today = new Date()
+  const defaultCheckin = `${format(today, 'yyyy-MM-dd')}T15:00`
+  const defaultCheckout = `${format(addDays(today, 1), 'yyyy-MM-dd')}T11:00`
   const [form,setForm]=useState(reservation ? {
     id: reservation.id,
     propertyId: reservation.propertyId,
@@ -331,7 +334,7 @@ function ReservationModal({ properties, reservation, onClose, onSave }) {
     checkout: localDateTime(reservation.checkout),
     phone: reservation.phone,
     status: reservation.status,
-  } : {propertyId:properties[0].id,guest:'',others:'',value:'',checkin:'',checkout:'',phone:'',status:'Confirmada'})
+  } : {propertyId:properties[0].id,guest:'',others:'',value:'',checkin:defaultCheckin,checkout:defaultCheckout,phone:'',status:'Confirmada'})
   const [saving,setSaving]=useState(false)
   const [error,setError]=useState('')
   const update=e=>setForm({...form,[e.target.name]:e.target.value})
