@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import AnalyticsDashboard from './AnalyticsDashboard'
+import CleaningCalendar from './CleaningCalendar'
 import { isReceived } from './lib/analytics'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { addDays, addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, Receipt, SignOut, Wallet, WarningCircle, X } from '@phosphor-icons/react'
-import { deleteExpenseOverride, loadPortfolio, loginEmail, saveCashIncome, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Broom, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, Receipt, SignOut, Wallet, WarningCircle, X } from '@phosphor-icons/react'
+import { deleteExpenseOverride, loadPortfolio, loginEmail, resetCleaningDate, saveCashIncome, saveCleaningDate, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
 
@@ -47,10 +48,10 @@ function Login({ onLogin }) {
 }
 
 function Sidebar({ view, setView, logout }) {
-  const items = [['dashboard', ChartLineUp, 'Visão geral'], ['calendar', CalendarBlank, 'Calendário'], ['reservations', List, 'Reservas'], ['properties', Buildings, 'Imóveis'], ['finances', Wallet, 'Finanças Pessoais']]
+  const items = [['dashboard', ChartLineUp, 'Visão geral'], ['calendar', CalendarBlank, 'Calendário'], ['cleaning', Broom, 'Organização das Faxinas'], ['reservations', List, 'Reservas'], ['properties', Buildings, 'Imóveis'], ['finances', Wallet, 'Finanças Pessoais']]
   return <aside className="sidebar">
     <div className="brand"><span className="brand-mark"><HouseLine weight="fill" /></span><strong>morada</strong></div>
-    <nav>{items.map(([id, Icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}><Icon />{label}</button>)}</nav>
+    <nav>{items.map(([id, Icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}><Icon /><span className="sidebar-label-desktop">{label}</span>{id === 'cleaning' && <span className="sidebar-label-mobile">Faxinas</span>}</button>)}</nav>
     <div className="sidebar-foot"><div className="avatars"><span>SA</span><span>JM</span><div><strong>Sandro & Joana</strong><small>Administradores</small></div></div><button className="icon-button" onClick={logout} title="Sair"><SignOut /></button></div>
   </aside>
 }
@@ -353,6 +354,7 @@ export default function App() {
   const [expenses,setExpenses]=useState([])
   const [adjustments,setAdjustments]=useState([])
   const [expenseOverrides,setExpenseOverrides]=useState([])
+  const [cleaningTasks,setCleaningTasks]=useState([])
   const [modal,setModal]=useState(null)
   const [expenseModal,setExpenseModal]=useState(false)
   const [incomeModal,setIncomeModal]=useState(false)
@@ -364,11 +366,11 @@ export default function App() {
     return ()=>subscription.unsubscribe()
   },[])
   useEffect(()=>{
-    if(!session){setProperties([]);setReservations([]);setExpenses([]);setAdjustments([]);setExpenseOverrides([]);setOrganizationId(null);return}
+    if(!session){setProperties([]);setReservations([]);setExpenses([]);setAdjustments([]);setExpenseOverrides([]);setCleaningTasks([]);setOrganizationId(null);return}
     setLoading(true)
-    loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses);setAdjustments(data.adjustments);setExpenseOverrides(data.expenseOverrides)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
+    loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses);setAdjustments(data.adjustments);setExpenseOverrides(data.expenseOverrides);setCleaningTasks(data.cleaningTasks)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
   },[session])
-  const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',reservations:'Reservas',properties:'Imóveis',finances:'Finanças pessoais'}
+  const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',cleaning:'Organização das Faxinas',reservations:'Reservas',properties:'Imóveis',finances:'Finanças pessoais'}
   const showToast=message=>{setToast(message);window.setTimeout(()=>setToast(''),5000)}
   const login=async(login,password)=>{if(login.trim().toLowerCase()!=='airbnb')throw new Error('Credenciais inválidas');const {error}=await supabase.auth.signInWithPassword({email:loginEmail,password});if(error)throw error}
   const save=async form=>{if(form.id){try{const reservation=await updateReservation({organizationId,form});setReservations(current=>current.map(item=>item.id===reservation.id?reservation:item).sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null);showToast('Reserva atualizada com sucesso.');return}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível atualizar a reserva: ${error.message}`);throw error}}let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível salvar a reserva: ${error.message}`);throw error}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
@@ -377,9 +379,11 @@ export default function App() {
   const saveIncomeRecord=async form=>{try{const income=await saveCashIncome({organizationId,form});setAdjustments(current=>[...current,income].sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)));setIncomeModal(false);showToast('Receita adicionada ao fluxo de caixa.')}catch(error){showToast(`Não foi possível salvar a receita: ${error.message}`);throw error}}
   const saveOverrideRecord=async form=>{try{const override=await saveExpenseOverride({organizationId,...form});setExpenseOverrides(current=>[...current.filter(item=>!(item.expenseId===override.expenseId&&item.month===override.month)),override]);setOverrideModal(null);showToast('Previsão mensal ajustada sem alterar a recorrência.')}catch(error){showToast(`Não foi possível ajustar a previsão: ${error.message}`);throw error}}
   const resetOverrideRecord=async form=>{try{await deleteExpenseOverride({organizationId,...form});setExpenseOverrides(current=>current.filter(item=>!(item.expenseId===form.expenseId&&item.month===form.month)));setOverrideModal(null);showToast('Valor recorrente restaurado para este mês.')}catch(error){showToast(`Não foi possível restaurar a recorrência: ${error.message}`);throw error}}
+  const moveCleaning=async(item,date)=>{const task=await saveCleaningDate({organizationId,task:item.task,reservation:item,date});setCleaningTasks(current=>[...current.filter(entry=>entry.reservationId!==item.id),task]);showToast('Faxina reagendada com sucesso.')}
+  const resetCleaning=async item=>{await resetCleaningDate({organizationId,taskId:item.task.id});setCleaningTasks(current=>current.filter(entry=>entry.id!==item.task.id));showToast('Faxina restaurada para o dia do check-out.')}
   if(!authReady)return <main className="login-page"><section className="login-panel"><p className="muted">Validando acesso seguro…</p></section></main>
   if(!session)return <Login onLogin={login} />
   if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
   const newAction = view === 'finances' ? () => setExpenseModal(true) : () => setModal('new')
-  return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'} secondaryAction={view === 'finances' ? () => setIncomeModal(true) : null} secondaryLabel="Nova receita"/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onNewIncome={()=>setIncomeModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {incomeModal&&<IncomeModal onClose={()=>setIncomeModal(false)} onSave={saveIncomeRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'} secondaryAction={view === 'finances' ? () => setIncomeModal(true) : null} secondaryLabel="Nova receita"/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='cleaning'&&<CleaningCalendar reservations={reservations} properties={properties} tasks={cleaningTasks} onMove={moveCleaning} onReset={resetCleaning}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onNewIncome={()=>setIncomeModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {incomeModal&&<IncomeModal onClose={()=>setIncomeModal(false)} onSave={saveIncomeRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }

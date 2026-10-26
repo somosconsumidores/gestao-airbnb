@@ -81,6 +81,15 @@ export const toExpenseOverride = row => ({
   notes: row.notes || '',
 })
 
+export const toCleaningTask = row => ({
+  id: String(row.id),
+  reservationId: row.reservation_id ? String(row.reservation_id) : null,
+  propertyId: row.property_id ? String(row.property_id) : null,
+  taskType: row.task_type,
+  dueAt: row.due_at,
+  status: row.status,
+})
+
 export async function loadPortfolio() {
   const { data: memberships, error: membershipError } = await supabase
     .from('organization_members')
@@ -91,18 +100,20 @@ export async function loadPortfolio() {
   const membership = memberships?.[0]
   if (!membership) throw new Error('Usuário sem acesso à organização. Associe-o em organization_members.')
 
-  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }, { data: expenseRows, error: expenseError }, { data: adjustmentRows, error: adjustmentError }, { data: overrideRows, error: overrideError }] = await Promise.all([
+  const [{ data: propertyRows, error: propertyError }, { data: reservationRows, error: reservationError }, { data: expenseRows, error: expenseError }, { data: adjustmentRows, error: adjustmentError }, { data: overrideRows, error: overrideError }, { data: cleaningRows, error: cleaningError }] = await Promise.all([
     supabase.from('properties').select('*').eq('organization_id', membership.organization_id).order('name'),
     supabase.from('reservations').select('*, reservation_guests(full_name)').eq('organization_id', membership.organization_id).order('checkin_at'),
     supabase.from('expenses').select('*').eq('organization_id', membership.organization_id).order('incurred_on'),
     supabase.from('cash_adjustments').select('*').eq('organization_id', membership.organization_id).order('occurred_at'),
     supabase.from('expense_monthly_overrides').select('*').eq('organization_id', membership.organization_id).order('month'),
+    supabase.from('operational_tasks').select('id,reservation_id,property_id,task_type,due_at,status').eq('organization_id', membership.organization_id).eq('task_type', 'cleaning').not('reservation_id', 'is', null),
   ])
   if (propertyError) throw propertyError
   if (reservationError) throw reservationError
   if (expenseError) throw expenseError
   if (adjustmentError) throw adjustmentError
   if (overrideError) throw overrideError
+  if (cleaningError) throw cleaningError
 
   const properties = await Promise.all((propertyRows || []).map(async row => {
     if (!row.photo_path) return toProperty(row)
@@ -118,7 +129,32 @@ export async function loadPortfolio() {
     expenses: (expenseRows || []).map(toExpense),
     adjustments: (adjustmentRows || []).map(toCashAdjustment),
     expenseOverrides: (overrideRows || []).map(toExpenseOverride),
+    cleaningTasks: (cleaningRows || []).map(toCleaningTask),
   }
+}
+
+export async function saveCleaningDate({ organizationId, task, reservation, date }) {
+  const dueAt = new Date(`${date}T12:00:00-03:00`).toISOString()
+  const payload = {
+    organization_id: organizationId,
+    property_id: Number(reservation.propertyId),
+    reservation_id: Number(reservation.id),
+    title: `Faxina após check-out · ${reservation.guest}`,
+    task_type: 'cleaning',
+    due_at: dueAt,
+    status: 'pending',
+  }
+  const query = task
+    ? supabase.from('operational_tasks').update(payload).eq('id', task.id).eq('organization_id', organizationId)
+    : supabase.from('operational_tasks').insert(payload)
+  const { data, error } = await query.select('id,reservation_id,property_id,task_type,due_at,status').single()
+  if (error) throw error
+  return toCleaningTask(data)
+}
+
+export async function resetCleaningDate({ organizationId, taskId }) {
+  const { error } = await supabase.from('operational_tasks').delete().eq('id', taskId).eq('organization_id', organizationId)
+  if (error) throw error
 }
 
 const safeFileName = name => name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9._-]+/g, '-').toLowerCase()
