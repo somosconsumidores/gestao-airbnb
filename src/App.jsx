@@ -60,7 +60,7 @@ function Topbar({ title, onNew, actionLabel = 'Nova reserva', secondaryAction, s
 }
 
 function CalendarView({ reservations, properties, onNew }) {
-  const [month, setMonth] = useState(new Date(2026, 8, 1))
+  const [month, setMonth] = useState(() => startOfMonth(new Date()))
   const start = startOfMonth(month), end = endOfMonth(month)
   const days = eachDayOfInterval({ start, end })
   const blanks = Array((start.getDay() + 6) % 7).fill(null)
