@@ -7,7 +7,7 @@ import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { addDays, addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Broom, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, Receipt, SignOut, Wallet, WarningCircle, X } from '@phosphor-icons/react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Broom, Buildings, CalendarBlank, Camera, CaretDown, ChartLineUp, Check, Clock, CurrencyDollar, Funnel, HouseLine, List, LockKey, MagnifyingGlass, PencilSimple, Plus, Receipt, SignOut, UserList, Wallet, WarningCircle, WhatsappLogo, X } from '@phosphor-icons/react'
 import { deleteExpenseOverride, loadPortfolio, loginEmail, resetCleaningDate, saveCashIncome, saveCleaningDate, saveExpense, saveExpenseOverride, saveProperty, saveReservation, supabase, updateReservation } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
@@ -48,7 +48,7 @@ function Login({ onLogin }) {
 }
 
 function Sidebar({ view, setView, logout }) {
-  const items = [['dashboard', ChartLineUp, 'Visão geral'], ['calendar', CalendarBlank, 'Calendário'], ['cleaning', Broom, 'Organização das Faxinas'], ['reservations', List, 'Reservas'], ['properties', Buildings, 'Imóveis'], ['finances', Wallet, 'Finanças Pessoais']]
+  const items = [['dashboard', ChartLineUp, 'Visão geral'], ['calendar', CalendarBlank, 'Calendário'], ['cleaning', Broom, 'Organização das Faxinas'], ['reservations', List, 'Reservas'], ['guests', UserList, 'Hóspedes'], ['properties', Buildings, 'Imóveis'], ['finances', Wallet, 'Finanças Pessoais']]
   return <aside className="sidebar">
     <div className="brand"><span className="brand-mark"><HouseLine weight="fill" /></span><strong>morada</strong></div>
     <nav>{items.map(([id, Icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}><Icon /><span className="sidebar-label-desktop">{label}</span>{id === 'cleaning' && <span className="sidebar-label-mobile">Faxinas</span>}</button>)}</nav>
@@ -109,6 +109,63 @@ function Reservations({ reservations, properties, onNew, onEdit }) {
     </div>}
     <div className="table-scroll"><table className="reservation-table"><thead><tr><th>Hóspede</th><th>Imóvel</th><th>Período</th><th>Valor</th><th>Status</th><th><span className="sr-only">Ações</span></th></tr></thead><tbody>{filteredReservations.length ? filteredReservations.map(r=>{const p=propertyById.get(r.propertyId); return <tr key={r.id}><td data-label="Hóspede"><strong>{r.guest}</strong><small>{r.phone || 'Sem telefone'}</small></td><td data-label="Imóvel"><span className="reservation-property"><i className="property-dot" style={{background:p?.color}} />{p?.name || 'Imóvel não encontrado'}</span></td><td data-label="Período"><span className="reservation-period">{format(parseISO(r.checkin),'dd MMM',{locale:ptBR})} — {format(parseISO(r.checkout),'dd MMM',{locale:ptBR})}<small>{format(parseISO(r.checkin),'HH:mm')} / {format(parseISO(r.checkout),'HH:mm')}</small></span></td><td data-label="Valor"><strong>{money.format(r.value)}</strong></td><td data-label="Status"><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td><td data-label="Ações"><button type="button" className="edit-reservation" onClick={()=>onEdit(r)} aria-label={`Editar reserva de ${r.guest}`}><PencilSimple /> Editar</button></td></tr>}) : <tr><td className="table-empty" colSpan="6"><MagnifyingGlass /><strong>Nenhuma reserva encontrada</strong><span>Altere ou limpe os filtros para visualizar outras reservas.</span></td></tr>}</tbody></table></div>
     <button className="floating-add" onClick={onNew}><Plus /> Adicionar reserva</button>
+  </section>
+}
+
+function Guests({ reservations, properties }) {
+  const [query, setQuery] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const propertyById = useMemo(() => new Map(properties.map(property => [property.id, property])), [properties])
+  const periodReservations = useMemo(() => reservations.filter(reservation => {
+    const checkinDate = reservation.checkin?.slice(0, 10)
+    return (!dateFrom || checkinDate >= dateFrom) && (!dateTo || checkinDate <= dateTo)
+  }), [dateFrom, dateTo, reservations])
+  const guests = useMemo(() => {
+    const registry = new Map()
+    periodReservations.forEach(reservation => {
+      const key = `guest:${normalizeSearch(reservation.guest)}:${String(reservation.phone || '').replace(/\D/g, '')}`
+      const current = registry.get(key) || { name: reservation.guest, phone: reservation.phone, stays: [], total: 0 }
+      current.name = reservation.guest || current.name
+      current.phone = reservation.phone || current.phone
+      current.stays.push(reservation)
+      if (reservation.status !== 'Cancelada') current.total += Number(reservation.value) || 0
+      registry.set(key, current)
+    })
+    return [...registry.values()].map(guest => {
+      const stays = [...guest.stays].sort((a, b) => b.checkin.localeCompare(a.checkin))
+      return { ...guest, stays, lastStay: stays[0], confirmedStays: stays.filter(stay => stay.status !== 'Cancelada').length }
+    }).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+  }, [periodReservations])
+  const filteredGuests = useMemo(() => guests.filter(guest => normalizeSearch(guest.name).includes(normalizeSearch(query.trim()))), [guests, query])
+  const whatsappUrl = phone => {
+    const digits = String(phone || '').replace(/\D/g, '')
+    if (!digits) return null
+    return `https://wa.me/${digits.startsWith('55') ? digits : `55${digits}`}`
+  }
+  return <section className="guests-page">
+    <div className="guests-intro">
+      <div><p className="eyebrow">Relacionamento</p><h2>Quem já se hospedou com você.</h2><p>Telefones e histórico reunidos a partir das reservas.</p></div>
+      <div className="guest-count"><strong>{guests.length}</strong><span>{guests.length === 1 ? 'hóspede cadastrado' : 'hóspedes cadastrados'}</span></div>
+    </div>
+    <div className="guest-filters">
+      <label className="guest-search"><MagnifyingGlass /><span className="sr-only">Buscar hóspede por nome</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por nome" />{query && <button type="button" onClick={() => setQuery('')} aria-label="Limpar busca"><X /></button>}</label>
+      <label className="guest-date"><span>Check-in a partir de</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={event => setDateFrom(event.target.value)} /></label>
+      <label className="guest-date"><span>Check-in até</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={event => setDateTo(event.target.value)} /></label>
+      {(dateFrom || dateTo) && <button type="button" className="clear-guest-dates" onClick={() => { setDateFrom(''); setDateTo('') }}><X /> Limpar período</button>}
+    </div>
+    <div className="guest-list" aria-live="polite">
+      {filteredGuests.length ? filteredGuests.map(guest => {
+        const lastProperty = propertyById.get(guest.lastStay?.propertyId)
+        const whatsapp = whatsappUrl(guest.phone)
+        return <article className="guest-card" key={`${guest.name}-${guest.phone}`}>
+          <div className="guest-identity"><span className="guest-monogram">{guest.name.split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase()}</span><div><h3>{guest.name}</h3><p>{guest.phone || 'Telefone não cadastrado'}</p></div></div>
+          <div className="guest-history"><span>Última estadia</span><strong>{guest.lastStay ? format(parseISO(guest.lastStay.checkin), "dd 'de' MMM 'de' yyyy", { locale: ptBR }) : '—'}</strong><small>{lastProperty?.name || 'Imóvel não disponível'}</small></div>
+          <div className="guest-stat"><span>Reservas</span><strong>{guest.confirmedStays}</strong><small>{money.format(guest.total)} em estadias</small></div>
+          {whatsapp ? <a className="whatsapp-button" href={whatsapp} target="_blank" rel="noreferrer" aria-label={`Conversar com ${guest.name} pelo WhatsApp`}><WhatsappLogo weight="fill" /> WhatsApp</a> : <button className="whatsapp-button disabled" type="button" disabled><WhatsappLogo /> Sem telefone</button>}
+        </article>
+      }) : <div className="guest-empty"><MagnifyingGlass /><strong>Nenhum hóspede encontrado</strong><span>Altere o nome ou o período selecionado.</span></div>}
+    </div>
   </section>
 }
 
@@ -370,7 +427,7 @@ export default function App() {
     setLoading(true)
     loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses);setAdjustments(data.adjustments);setExpenseOverrides(data.expenseOverrides);setCleaningTasks(data.cleaningTasks)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
   },[session])
-  const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',cleaning:'Organização das Faxinas',reservations:'Reservas',properties:'Imóveis',finances:'Finanças pessoais'}
+  const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',cleaning:'Organização das Faxinas',reservations:'Reservas',guests:'Hóspedes',properties:'Imóveis',finances:'Finanças pessoais'}
   const showToast=message=>{setToast(message);window.setTimeout(()=>setToast(''),5000)}
   const login=async(login,password)=>{if(login.trim().toLowerCase()!=='airbnb')throw new Error('Credenciais inválidas');const {error}=await supabase.auth.signInWithPassword({email:loginEmail,password});if(error)throw error}
   const save=async form=>{if(form.id){try{const reservation=await updateReservation({organizationId,form});setReservations(current=>current.map(item=>item.id===reservation.id?reservation:item).sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null);showToast('Reserva atualizada com sucesso.');return}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível atualizar a reserva: ${error.message}`);throw error}}let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível salvar a reserva: ${error.message}`);throw error}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
@@ -385,5 +442,5 @@ export default function App() {
   if(!session)return <Login onLogin={login} />
   if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
   const newAction = view === 'finances' ? () => setExpenseModal(true) : () => setModal('new')
-return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'} secondaryAction={view === 'finances' ? () => setIncomeModal(true) : null} secondaryLabel="Nova receita"/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='cleaning'&&<CleaningCalendar reservations={reservations} properties={properties} tasks={cleaningTasks} onMove={moveCleaning} onReset={resetCleaning}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onNewIncome={()=>setIncomeModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {incomeModal&&<IncomeModal onClose={()=>setIncomeModal(false)} onSave={saveIncomeRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'} secondaryAction={view === 'finances' ? () => setIncomeModal(true) : null} secondaryLabel="Nova receita"/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='cleaning'&&<CleaningCalendar reservations={reservations} properties={properties} tasks={cleaningTasks} onMove={moveCleaning} onReset={resetCleaning}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='guests'&&<Guests reservations={reservations} properties={properties}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onNewIncome={()=>setIncomeModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {incomeModal&&<IncomeModal onClose={()=>setIncomeModal(false)} onSave={saveIncomeRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }
