@@ -48,7 +48,7 @@ function Login({ onLogin }) {
 }
 
 function Sidebar({ view, setView, logout }) {
-  const items = [['dashboard', ChartLineUp, 'Visão geral'], ['calendar', CalendarBlank, 'Calendário'], ['cleaning', Broom, 'Organização das Faxinas'], ['reservations', List, 'Reservas'], ['guests', UserList, 'Hóspedes'], ['properties', Buildings, 'Imóveis'], ['finances', Wallet, 'Finanças Pessoais']]
+  const items = [['dashboard', ChartLineUp, 'Visão geral'], ['calendar', CalendarBlank, 'Calendário'], ['cleaning', Broom, 'Organização das Faxinas'], ['reservations', List, 'Reservas'], ['guests', UserList, 'Hóspedes'], ['properties', Buildings, 'Imóveis'], ['result', CurrencyDollar, 'Resultado financeiro'], ['finances', Wallet, 'Finanças Pessoais']]
   return <aside className="sidebar">
     <div className="brand"><span className="brand-mark"><HouseLine weight="fill" /></span><strong>morada</strong></div>
     <nav>{items.map(([id, Icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}><Icon /><span className="sidebar-label-desktop">{label}</span>{id === 'cleaning' && <span className="sidebar-label-mobile">Faxinas</span>}</button>)}</nav>
@@ -194,6 +194,69 @@ function Properties({ properties, onSaveProperty, reservations, setView }) {
     {editor&&<div className="modal-backdrop"><form className="modal property-form" onSubmit={save}><button type="button" className="modal-close" onClick={()=>setEditor(null)}><X /></button><p className="eyebrow">{editor==='new'?'Novo endereço':'Atualizar imóvel'}</p><h2>{editor==='new'?'Cadastrar imóvel':'Editar imóvel'}</h2><div className="property-fields"><label>Nome do imóvel<input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Loft Ipanema" /></label><label>Endereço<input required value={form.address} onChange={e=>setForm({...form,address:e.target.value})} placeholder="Rua, número, bairro e cidade" /></label><label className="upload-field"><span>Foto do imóvel</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={choosePhoto}/><div className="upload-box">{form.image?<img src={form.image} alt="Prévia do imóvel"/>:<><Camera/><strong>Selecionar foto</strong><small>JPG, PNG ou WebP</small></>}</div></label></div><button className="primary full" disabled={saving}>{saving?'Salvando…':editor==='new'?'Salvar imóvel':'Salvar alterações'}</button></form></div>}
     {selected&&<div className="modal-backdrop"><section className="modal property-detail"><button type="button" className="modal-close" onClick={()=>setSelected(null)}><X /></button>{detailView==='details'?<><div className="detail-photo"><img src={selected.image} alt={selected.name}/><span style={{background:selected.color}}>Ativo</span></div><p className="eyebrow">Detalhes do imóvel</p><h2>{selected.name}</h2><p className="detail-address">{selected.address}</p><div className="detail-actions"><button className="primary" onClick={()=>{setSelected(null);setView('calendar')}}><CalendarBlank/> Ver agenda</button><button className="secondary" onClick={()=>openEdit(selected)}><PencilSimple/> Editar imóvel</button><button className="secondary" onClick={()=>setDetailView('gains')}><ChartLineUp/> Ver ganhos</button></div></>:<><button className="back-button" onClick={()=>setDetailView('details')}><ArrowLeft/> Voltar ao imóvel</button><p className="eyebrow">Histórico financeiro</p><h2>Ganhos de {selected.short}</h2><div className="gains-total"><span>Total geral</span><strong>{money.format(totalGains)}</strong></div><div className="gains-list">{gains.length?gains.map(item=><div key={item.key}><span>{item.label}</span><i style={{width:`${Math.max(12,(item.value/Math.max(...gains.map(g=>g.value)))*100)}%`}}/><strong>{money.format(item.value)}</strong></div>):<p className="empty-state">Ainda não há reservas com ganhos para este imóvel.</p>}</div></>}</section></div>}
   </>
+}
+
+const resultCosts = {
+  studio: { iptuYear: 2200, cleaning: 150, electricity: 250, condo: 1500 },
+  bartolomeu: { iptuYear: 3500, cleaning: 350, electricity: 500, condo: 1300 },
+  ataulfo: { iptuYear: 8500, cleaning: 350, electricity: 200, condo: 2300 },
+}
+
+function FinancialResult({ reservations, properties }) {
+  const [month, setMonth] = useState(() => startOfMonth(new Date()))
+  const monthKey = format(month, 'yyyy-MM')
+  const rows = useMemo(() => properties.map(property => {
+    const costKey = normalizeSearch(property.name).includes('studio') ? 'studio'
+      : normalizeSearch(property.name).includes('bartolomeu') ? 'bartolomeu'
+      : normalizeSearch(property.name).includes('ataulfo') ? 'ataulfo'
+      : null
+    const costs = resultCosts[costKey]
+    if (!costs) return null
+    const monthlyReservations = reservations.filter(reservation => reservation.propertyId === property.id
+      && reservation.status !== 'Cancelada'
+      && reservation.checkin?.slice(0, 7) === monthKey)
+    const revenue = monthlyReservations.reduce((sum, reservation) => sum + Number(reservation.value || 0), 0)
+    const iptu = costs.iptuYear / 12
+    const cleaning = costs.cleaning * monthlyReservations.length
+    const tax = revenue * .275
+    const expenses = iptu + cleaning + costs.electricity + costs.condo + tax
+    const result = revenue - expenses
+    const margin = revenue > 0 ? (result / revenue) * 100 : 0
+    return { property, costs, reservations: monthlyReservations.length, revenue, iptu, cleaning, tax, expenses, result, margin }
+  }).filter(Boolean), [monthKey, properties, reservations])
+  const totals = rows.reduce((total, row) => ({
+    revenue: total.revenue + row.revenue,
+    expenses: total.expenses + row.expenses,
+    result: total.result + row.result,
+    reservations: total.reservations + row.reservations,
+  }), { revenue: 0, expenses: 0, result: 0, reservations: 0 })
+  const totalMargin = totals.revenue > 0 ? (totals.result / totals.revenue) * 100 : 0
+  return <section className="result-page">
+    <div className="result-heading">
+      <div><p className="eyebrow">Desempenho dos imóveis</p><h2>Da receita ao resultado, linha por linha.</h2><p>Reservas iniciadas no mês, custos operacionais e imposto sobre as estadias.</p></div>
+      <div className="result-month"><button className="icon-button" onClick={() => setMonth(subMonths(month, 1))} aria-label="Mês anterior"><ArrowLeft /></button><strong>{format(month, 'MMMM yyyy', { locale: ptBR })}</strong><button className="icon-button" onClick={() => setMonth(addMonths(month, 1))} aria-label="Próximo mês"><ArrowRight /></button></div>
+    </div>
+    <div className="result-summary">
+      <article><span>Receita das estadias</span><strong>{money.format(totals.revenue)}</strong><small>{totals.reservations} {totals.reservations === 1 ? 'reserva iniciada' : 'reservas iniciadas'}</small></article>
+      <article><span>Despesas estimadas</span><strong>{money.format(totals.expenses)}</strong><small>Fixas, operacionais e impostos</small></article>
+      <article className={totals.result < 0 ? 'loss' : ''}><span>Resultado líquido</span><strong>{money.format(totals.result)}</strong><small>{totalMargin.toFixed(1).replace('.', ',')}% de margem</small></article>
+    </div>
+    <div className="result-properties">{rows.map(row => <article className="result-property" key={row.property.id}>
+      <header><div><i style={{ background: row.property.color }} /><span>{row.property.short}</span></div><strong className={row.result < 0 ? 'loss' : ''}>{money.format(row.result)}</strong></header>
+      <div className="result-margin"><span style={{ width: `${Math.min(100, Math.max(0, row.margin))}%` }} /><small>{row.margin.toFixed(1).replace('.', ',')}% de margem líquida</small></div>
+      <div className="result-statement">
+        <div className="income"><span>Receita · {row.reservations} {row.reservations === 1 ? 'reserva' : 'reservas'}</span><strong>{money.format(row.revenue)}</strong></div>
+        <div><span>IPTU · 1/12 de {money.format(row.costs.iptuYear)}</span><b>− {money.format(row.iptu)}</b></div>
+        <div><span>Faxina · {row.reservations} × {money.format(row.costs.cleaning)}</span><b>− {money.format(row.cleaning)}</b></div>
+        <div><span>Luz · média mensal</span><b>− {money.format(row.costs.electricity)}</b></div>
+        <div><span>Condomínio · mensal</span><b>− {money.format(row.costs.condo)}</b></div>
+        <div><span>Imposto Airbnb · 27,5%</span><b>− {money.format(row.tax)}</b></div>
+      </div>
+      <footer><span>Total de despesas</span><strong>{money.format(row.expenses)}</strong></footer>
+    </article>)}</div>
+    {!rows.length && <div className="result-empty"><Buildings /><strong>Nenhum imóvel reconhecido</strong><span>Cadastre Studio, Bartolomeu ou Ataulfo para visualizar o resultado.</span></div>}
+    <p className="result-note"><WarningCircle /> Os valores de luz são médias mensais, e o IPTU é apropriado em 1/12 por mês. O imposto é calculado sobre a receita das reservas iniciadas na competência.</p>
+  </section>
 }
 
 function Finances({ reservations, properties, expenses, adjustments, expenseOverrides, onNewExpense, onNewIncome, onEditExpense }) {
@@ -427,7 +490,7 @@ export default function App() {
     setLoading(true)
     loadPortfolio().then(data=>{setOrganizationId(data.organizationId);setProperties(data.properties);setReservations(data.reservations);setExpenses(data.expenses);setAdjustments(data.adjustments);setExpenseOverrides(data.expenseOverrides);setCleaningTasks(data.cleaningTasks)}).catch(error=>setToast(error.message)).finally(()=>setLoading(false))
   },[session])
-  const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',cleaning:'Organização das Faxinas',reservations:'Reservas',guests:'Hóspedes',properties:'Imóveis',finances:'Finanças pessoais'}
+  const titles={dashboard:'Visão geral',calendar:'Calendário de ocupação',cleaning:'Organização das Faxinas',reservations:'Reservas',guests:'Hóspedes',properties:'Imóveis',result:'Resultado financeiro',finances:'Finanças pessoais'}
   const showToast=message=>{setToast(message);window.setTimeout(()=>setToast(''),5000)}
   const login=async(login,password)=>{if(login.trim().toLowerCase()!=='airbnb')throw new Error('Credenciais inválidas');const {error}=await supabase.auth.signInWithPassword({email:loginEmail,password});if(error)throw error}
   const save=async form=>{if(form.id){try{const reservation=await updateReservation({organizationId,form});setReservations(current=>current.map(item=>item.id===reservation.id?reservation:item).sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null);showToast('Reserva atualizada com sucesso.');return}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível atualizar a reserva: ${error.message}`);throw error}}let reservation;try{reservation=await saveReservation({organizationId,form});setReservations(v=>[...v,reservation].sort((a,b)=>a.checkin.localeCompare(b.checkin)));setModal(null)}catch(error){showToast(error.message.includes('overlap')?'Este imóvel já possui outra reserva nessas datas.':`Não foi possível salvar a reserva: ${error.message}`);throw error}showToast('Reserva salva. Enviando alertas…');try{const {error}=await supabase.functions.invoke('reservation-alert',{body:{reservation_id:Number(reservation.id)}});if(error)throw error;showToast('Reserva salva e alertas enviados para Sandro e Joana.')}catch{showToast('Reserva salva. O alerta será ativado após configurar o segredo da Resend.') }}
@@ -442,5 +505,5 @@ export default function App() {
   if(!session)return <Login onLogin={login} />
   if(loading)return <main className="login-page"><section className="login-panel"><p className="muted">Carregando sua operação…</p></section></main>
   const newAction = view === 'finances' ? () => setExpenseModal(true) : () => setModal('new')
-return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'} secondaryAction={view === 'finances' ? () => setIncomeModal(true) : null} secondaryLabel="Nova receita"/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='cleaning'&&<CleaningCalendar reservations={reservations} properties={properties} tasks={cleaningTasks} onMove={moveCleaning} onReset={resetCleaning}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='guests'&&<Guests reservations={reservations} properties={properties}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onNewIncome={()=>setIncomeModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {incomeModal&&<IncomeModal onClose={()=>setIncomeModal(false)} onSave={saveIncomeRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
+return <main className="app-shell overflow-x-hidden w-full max-w-full"><Sidebar view={view} setView={setView} logout={()=>supabase.auth.signOut()}/><div className="workspace"><Topbar title={titles[view]} onNew={newAction} actionLabel={view === 'finances' ? 'Nova despesa' : 'Nova reserva'} secondaryAction={view === 'finances' ? () => setIncomeModal(true) : null} secondaryLabel="Nova receita"/><div className="content">{view==='dashboard'&&<Dashboard reservations={reservations} properties={properties} setView={setView} onNew={()=>setModal('new')}/>} {view==='calendar'&&<CalendarView reservations={reservations} properties={properties} onNew={()=>setModal('new')}/>} {view==='cleaning'&&<CleaningCalendar reservations={reservations} properties={properties} tasks={cleaningTasks} onMove={moveCleaning} onReset={resetCleaning}/>} {view==='reservations'&&<Reservations reservations={reservations} properties={properties} onNew={()=>setModal('new')} onEdit={setModal}/>} {view==='guests'&&<Guests reservations={reservations} properties={properties}/>} {view==='properties'&&<Properties properties={properties} onSaveProperty={savePropertyRecord} reservations={reservations} setView={setView}/>} {view==='result'&&<FinancialResult reservations={reservations} properties={properties}/>} {view==='finances'&&<Finances reservations={reservations} properties={properties} expenses={expenses} adjustments={adjustments} expenseOverrides={expenseOverrides} onNewExpense={()=>setExpenseModal(true)} onNewIncome={()=>setIncomeModal(true)} onEditExpense={setOverrideModal}/>}</div><footer><strong>morada</strong><span>Gestão feita para receber bem.</span><small>Operação de Sandro & Joana</small></footer></div>{modal&&properties.length>0&&<ReservationModal properties={properties} reservation={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={save}/>} {expenseModal&&<ExpenseModal onClose={()=>setExpenseModal(false)} onSave={saveExpenseRecord}/>} {incomeModal&&<IncomeModal onClose={()=>setIncomeModal(false)} onSave={saveIncomeRecord}/>} {overrideModal&&<ExpenseOverrideModal edit={overrideModal} overrides={expenseOverrides} onClose={()=>setOverrideModal(null)} onSave={saveOverrideRecord} onReset={resetOverrideRecord}/>} {toast&&<div className="toast"><Check weight="bold" />{toast}</div>}</main>
 }
