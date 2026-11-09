@@ -199,7 +199,7 @@ function Properties({ properties, onSaveProperty, reservations, setView }) {
 const resultCosts = {
   studio: { iptuYear: 2200, cleaning: 150, electricity: 250, condo: 1500 },
   bartolomeu: { iptuYear: 3500, cleaning: 350, electricity: 500, condo: 1300 },
-  ataulfo: { iptuYear: 8500, cleaning: 350, electricity: 200, condo: 2300 },
+  ataulfo: { iptuYear: 0, cleaning: 350, electricity: 200, condo: 0 },
 }
 
 function FinancialResult({ reservations, properties }) {
@@ -246,16 +246,16 @@ function FinancialResult({ reservations, properties }) {
       <div className="result-margin"><span style={{ width: `${Math.min(100, Math.max(0, row.margin))}%` }} /><small>{row.margin.toFixed(1).replace('.', ',')}% de margem líquida</small></div>
       <div className="result-statement">
         <div className="income"><span>Receita · {row.reservations} {row.reservations === 1 ? 'reserva' : 'reservas'}</span><strong>{money.format(row.revenue)}</strong></div>
-        <div><span>IPTU · 1/12 de {money.format(row.costs.iptuYear)}</span><b>− {money.format(row.iptu)}</b></div>
+        <div><span>{row.costs.iptuYear ? <>IPTU · 1/12 de {money.format(row.costs.iptuYear)}</> : 'IPTU · não considerado'}</span><b>− {money.format(row.iptu)}</b></div>
         <div><span>Faxina · {row.reservations} × {money.format(row.costs.cleaning)}</span><b>− {money.format(row.cleaning)}</b></div>
         <div><span>Luz · média mensal</span><b>− {money.format(row.costs.electricity)}</b></div>
-        <div><span>Condomínio · mensal</span><b>− {money.format(row.costs.condo)}</b></div>
+        <div><span>{row.costs.condo ? 'Condomínio · mensal' : 'Condomínio · não considerado'}</span><b>− {money.format(row.costs.condo)}</b></div>
         <div><span>Imposto Airbnb · 27,5%</span><b>− {money.format(row.tax)}</b></div>
       </div>
       <footer><span>Total de despesas</span><strong>{money.format(row.expenses)}</strong></footer>
     </article>)}</div>
     {!rows.length && <div className="result-empty"><Buildings /><strong>Nenhum imóvel reconhecido</strong><span>Cadastre Studio, Bartolomeu ou Ataulfo para visualizar o resultado.</span></div>}
-    <p className="result-note"><WarningCircle /> Os valores de luz são médias mensais, e o IPTU é apropriado em 1/12 por mês. O imposto é calculado sobre a receita das reservas iniciadas na competência.</p>
+    <p className="result-note"><WarningCircle /> Os valores de luz são médias mensais, e o IPTU, quando considerado, é apropriado em 1/12 por mês. No Ataulfo, IPTU e condomínio não compõem as despesas. O imposto é calculado sobre a receita das reservas iniciadas na competência.</p>
   </section>
 }
 
